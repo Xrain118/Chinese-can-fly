@@ -1,0 +1,1284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PID 实时图表 · 八路循迹调试台</title>
+    <style>
+        :root {
+            --ink: #172536;
+            --muted: #687b8d;
+            --line: #dce6ed;
+            --panel: #ffffff;
+            --canvas: #eef4f7;
+            --navy: #172238;
+            --teal: #0d9488;
+            --teal-dark: #0f766e;
+            --green: #16a34a;
+            --amber: #d97706;
+            --red: #dc2626;
+            --shadow: 0 1px 2px rgba(16, 42, 67, 0.05), 0 12px 34px rgba(16, 42, 67, 0.08);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-width: 320px;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 8% 0%, rgba(13, 148, 136, 0.08), transparent 28rem),
+                radial-gradient(circle at 96% 6%, rgba(59, 130, 246, 0.07), transparent 30rem),
+                var(--canvas);
+            font-family: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        }
+
+        button, input, select { font: inherit; }
+
+        button {
+            min-height: 38px;
+            padding: 0 15px;
+            border: 0;
+            border-radius: 9px;
+            color: #fff;
+            background: linear-gradient(180deg, #14b8a6, #0d9488);
+            box-shadow: 0 5px 14px rgba(13, 148, 136, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 120ms ease, filter 140ms ease, opacity 120ms ease;
+        }
+
+        button:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); }
+        button:active:not(:disabled) { transform: translateY(0); }
+        button:disabled { cursor: not-allowed; opacity: 0.45; }
+        button.secondary { color: var(--ink); background: #eef3f7; box-shadow: inset 0 0 0 1px #d7e2e9; }
+        button.danger { background: linear-gradient(180deg, #ef5350, #d32f2f); box-shadow: 0 5px 14px rgba(220, 38, 38, 0.2); }
+        button.small { min-height: 32px; padding: 0 10px; font-size: 12px; }
+        button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid rgba(13, 148, 136, 0.55); outline-offset: 2px; }
+
+        input, select {
+            height: 38px;
+            min-width: 0;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            padding: 0 10px;
+            color: var(--ink);
+            background: #fff;
+            outline: none;
+        }
+
+        input:focus, select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12); }
+
+        .app-header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            color: var(--ink);
+            background: rgba(255, 255, 255, 0.94);
+            border-bottom: 1px solid var(--line);
+            box-shadow: 0 6px 24px rgba(16, 42, 67, 0.05);
+            backdrop-filter: blur(12px);
+        }
+
+        .app-header::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: -1px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(20, 184, 166, 0.8) 28%, rgba(59, 130, 246, 0.65) 66%, transparent);
+        }
+
+        .header-inner {
+            width: min(1720px, calc(100% - 32px));
+            min-height: 72px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+        }
+
+        .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
+        .brand-mark {
+            width: 43px;
+            height: 43px;
+            flex: 0 0 auto;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            color: #fff;
+            background: linear-gradient(150deg, #14b8a6, #0d9488);
+            box-shadow: 0 8px 18px rgba(13, 148, 136, 0.22);
+            font: 800 12px/1 system-ui, sans-serif;
+            letter-spacing: 0.04em;
+        }
+
+        .brand h1 { margin: 0; font-size: clamp(18px, 2vw, 25px); letter-spacing: 0.01em; }
+        .brand p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+        .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+
+        .status-pill {
+            min-height: 34px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 12px;
+            border: 1px solid #d8e2e9;
+            border-radius: 999px;
+            color: #526577;
+            background: #f5f8fa;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14); }
+        .status-pill.live { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+        .status-pill.live .status-dot { background: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14); animation: pulse 1.8s infinite; }
+        .status-pill.waiting { color: #a15c05; border-color: #fde68a; background: #fffbeb; }
+        .status-pill.waiting .status-dot { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.13); }
+        .status-pill.demo { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
+        .status-pill.demo .status-dot { background: #3b82f6; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.13); animation: pulse 1.8s infinite; }
+
+        @keyframes pulse { 50% { opacity: 0.55; transform: scale(0.82); } }
+
+        main {
+            width: min(1720px, calc(100% - 32px));
+            margin: 18px auto 30px;
+        }
+
+        .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+        .main-column { min-width: 0; display: grid; gap: 14px; }
+        .card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; }
+        .card-head { min-height: 60px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+        .card-head h2 { margin: 0; font-size: 16px; }
+        .hint { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+        .toolbar { padding: 12px 16px; display: flex; align-items: end; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: #fbfcfd; }
+        .toolbar-field { display: grid; gap: 5px; }
+        .toolbar-field label { color: var(--muted); font-size: 11px; font-weight: 700; }
+        .toolbar-field select { width: 126px; }
+        .toolbar-field.compact input { width: 90px; }
+        .toolbar-spacer { flex: 1 1 20px; }
+        .manual-range { display: none; align-items: end; gap: 8px; }
+        .manual-range.show { display: flex; }
+
+        .chart-wrap {
+            position: relative;
+            min-height: 520px;
+            background:
+                linear-gradient(180deg, rgba(13, 148, 136, 0.025), transparent 34%),
+                #fff;
+        }
+
+        #pidCanvas { width: 100%; height: 520px; display: block; touch-action: none; }
+        .chart-tooltip {
+            position: absolute;
+            z-index: 5;
+            min-width: 190px;
+            max-width: 310px;
+            padding: 9px 11px;
+            border: 1px solid rgba(203, 213, 225, 0.92);
+            border-radius: 9px;
+            color: #e5edf5;
+            background: rgba(23, 34, 56, 0.94);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.24);
+            pointer-events: none;
+            font-size: 11px;
+            line-height: 1.55;
+            transform: translate(12px, -50%);
+        }
+        .chart-tooltip[hidden] { display: none; }
+        .tooltip-time { margin-bottom: 4px; color: #9fb3c8; }
+        .tooltip-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 7px; align-items: center; }
+        .tooltip-color { width: 7px; height: 7px; border-radius: 50%; }
+        .tooltip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tooltip-value { color: #fff; font-family: Consolas, monospace; font-weight: 700; }
+
+        .chart-footer { min-height: 42px; padding: 9px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+        .chart-footer strong { color: var(--ink); }
+
+        .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 9px; }
+        .legend-empty { padding: 18px; border: 1px dashed #cddae3; border-radius: 12px; color: var(--muted); background: rgba(255, 255, 255, 0.55); text-align: center; font-size: 12px; }
+        .legend-card { padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 5px 16px rgba(16, 42, 67, 0.04); }
+        .legend-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .legend-line { width: 22px; height: 3px; flex: 0 0 auto; border-radius: 4px; }
+        .legend-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 800; }
+        .legend-current { margin-left: auto; font: 800 15px/1 Consolas, monospace; }
+        .legend-stats { margin-top: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; color: var(--muted); font-size: 10px; }
+        .legend-stats strong { display: block; margin-top: 2px; color: #42576a; font: 700 11px/1.2 Consolas, monospace; }
+
+        .sidebar { position: sticky; top: 90px; max-height: calc(100vh - 108px); display: flex; flex-direction: column; }
+        .sidebar .card-head { flex: 0 0 auto; }
+        .sidebar-controls { flex: 0 0 auto; padding: 12px; display: grid; gap: 9px; border-bottom: 1px solid var(--line); background: #fbfcfd; }
+        .search-input { width: 100%; }
+        .custom-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+        .custom-help { color: var(--muted); font-size: 10px; line-height: 1.45; }
+        .preset-row { display: flex; flex-wrap: wrap; gap: 6px; }
+        .field-list { min-height: 180px; padding: 8px 10px 14px; overflow: auto; }
+        .field-group { margin-top: 10px; }
+        .field-group-title { padding: 5px 4px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #52677a; font-size: 11px; font-weight: 800; }
+        .field-group-title span:last-child { color: #93a4b3; font-weight: 600; }
+        .field-row {
+            min-height: 52px;
+            margin: 4px 0;
+            padding: 7px 8px;
+            display: grid;
+            grid-template-columns: 19px minmax(0, 1fr) 25px;
+            gap: 8px;
+            align-items: center;
+            border: 1px solid transparent;
+            border-radius: 9px;
+            transition: background 120ms ease, border-color 120ms ease;
+        }
+        .field-row:hover { background: #f4f8fa; border-color: #e0e9ef; }
+        .field-row.selected { background: #f0fdfa; border-color: #b7ece6; }
+        .field-row.waiting .field-value { color: #a2b0bd; }
+        .field-check { width: 17px; height: 17px; margin: 0; accent-color: var(--teal); }
+        .field-copy { min-width: 0; }
+        .field-name-line { display: flex; align-items: baseline; justify-content: space-between; gap: 7px; }
+        .field-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 700; }
+        .field-value { flex: 0 0 auto; color: var(--teal-dark); font: 700 11px/1 Consolas, monospace; }
+        .field-key { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #91a1af; font: 10px/1.2 Consolas, monospace; }
+        .field-color { width: 24px; height: 24px; padding: 2px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+        .empty-fields { padding: 26px 8px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; }
+
+        .notice {
+            margin-bottom: 14px;
+            padding: 11px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            border: 1px solid #bfdbfe;
+            border-radius: 11px;
+            color: #1e40af;
+            background: #eff6ff;
+            font-size: 12px;
+            line-height: 1.55;
+        }
+
+        .toast {
+            position: fixed;
+            left: 50%;
+            bottom: 22px;
+            z-index: 50;
+            max-width: min(520px, calc(100% - 32px));
+            padding: 10px 15px;
+            border-radius: 999px;
+            color: #fff;
+            background: rgba(23, 34, 56, 0.94);
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+            font-size: 12px;
+            transform: translate(-50%, 18px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 160ms ease, transform 160ms ease;
+        }
+        .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+        @media (max-width: 1100px) {
+            .workspace { grid-template-columns: 1fr; }
+            .sidebar { position: static; max-height: none; }
+            .field-list { max-height: 430px; }
+        }
+
+        @media (max-width: 720px) {
+            .header-inner { width: min(100% - 20px, 1720px); padding: 10px 0; align-items: flex-start; flex-direction: column; }
+            .header-actions { width: 100%; justify-content: flex-start; }
+            main { width: min(100% - 20px, 1720px); margin-top: 10px; }
+            .chart-wrap { min-height: 410px; }
+            #pidCanvas { height: 410px; }
+            .toolbar { align-items: stretch; }
+            .toolbar-field { flex: 1 1 120px; }
+            .toolbar-field select, .toolbar-field.compact input { width: 100%; }
+            .toolbar-spacer { display: none; }
+            .toolbar > button { flex: 1 1 110px; }
+            .manual-range.show { width: 100%; }
+            .manual-range .toolbar-field { flex: 1 1 0; }
+            .chart-footer { align-items: flex-start; flex-direction: column; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .status-pill.live .status-dot, .status-pill.demo .status-dot { animation: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand">
+                <div class="brand-mark">PID</div>
+                <div>
+                    <h1>PID 实时图表</h1>
+                    <p>自选调试器数据 · 实时曲线 · 统计与 CSV 导出</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div id="sourceStatus" class="status-pill waiting" aria-live="polite"><span class="status-dot"></span><span id="sourceStatusText">等待主调试器</span></div>
+                <button id="backButton" class="secondary" type="button">返回调试台</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="notice">
+            <span>图表页不占用串口。请保持 <strong>TrackingBluetoothDebugger.html</strong> 打开并已连接小车，解析后的全部数值会自动送入这里。</span>
+            <button id="demoButton" class="small secondary" type="button">试用模拟数据</button>
+        </div>
+
+        <div class="workspace">
+            <div class="main-column">
+                <section class="card">
+                    <div class="card-head">
+                        <div>
+                            <h2>实时趋势</h2>
+                            <div class="hint">同一纵轴适合比较目标值与实际值；量级差异较大时可切换曲线或使用“零点对称”量程。</div>
+                        </div>
+                        <span id="sampleSummary" class="hint">0 条曲线</span>
+                    </div>
+                    <div class="toolbar">
+                        <div class="toolbar-field">
+                            <label for="timeWindow">时间窗口</label>
+                            <select id="timeWindow">
+                                <option value="5">最近 5 秒</option>
+                                <option value="10" selected>最近 10 秒</option>
+                                <option value="30">最近 30 秒</option>
+                                <option value="60">最近 60 秒</option>
+                                <option value="120">最近 120 秒</option>
+                            </select>
+                        </div>
+                        <div class="toolbar-field">
+                            <label for="sampleRate">图表采样率</label>
+                            <select id="sampleRate">
+                                <option value="10">10 Hz</option>
+                                <option value="25" selected>25 Hz</option>
+                                <option value="50">50 Hz</option>
+                            </select>
+                        </div>
+                        <div class="toolbar-field">
+                            <label for="scaleMode">纵轴量程</label>
+                            <select id="scaleMode">
+                                <option value="auto" selected>自动</option>
+                                <option value="symmetric">零点对称</option>
+                                <option value="fixed">手动固定</option>
+                            </select>
+                        </div>
+                        <div id="manualRange" class="manual-range">
+                            <div class="toolbar-field compact"><label for="yMin">最小值</label><input id="yMin" type="number" value="-1000" step="any"></div>
+                            <div class="toolbar-field compact"><label for="yMax">最大值</label><input id="yMax" type="number" value="1000" step="any"></div>
+                        </div>
+                        <div class="toolbar-spacer"></div>
+                        <button id="pauseButton" type="button">暂停</button>
+                        <button id="clearButton" class="secondary" type="button">清空</button>
+                        <button id="exportButton" class="secondary" type="button">导出 CSV</button>
+                    </div>
+                    <div id="chartWrap" class="chart-wrap">
+                        <canvas id="pidCanvas" aria-label="PID 实时数据折线图"></canvas>
+                        <div id="chartTooltip" class="chart-tooltip" hidden></div>
+                    </div>
+                    <div class="chart-footer">
+                        <span>鼠标移到曲线上可查看同一时刻的所有已选数据。</span>
+                        <span>当前纵轴：<strong id="axisSummary">--</strong></span>
+                    </div>
+                </section>
+
+                <section>
+                    <div id="legend" class="legend"><div class="legend-empty">从右侧选择数据后，这里会显示当前值、最小值、最大值和平均值。</div></div>
+                </section>
+            </div>
+
+            <aside class="card sidebar">
+                <div class="card-head">
+                    <div>
+                        <h2>选择显示数据</h2>
+                        <div id="selectedCount" class="hint">已选择 0 项</div>
+                    </div>
+                    <button id="deselectAllButton" class="small secondary" type="button">全不选</button>
+                </div>
+                <div class="sidebar-controls">
+                    <input id="fieldSearch" class="search-input" type="search" placeholder="搜索名称或数据键" aria-label="搜索数据字段">
+                    <div class="custom-row">
+                        <input id="customField" type="text" placeholder="如 telemetry.TEMP" aria-label="自定义数据键">
+                        <button id="addCustomButton" class="small" type="button">添加</button>
+                    </div>
+                    <div class="custom-help">固件新增的任意数字键会自动出现。也可先按“类别.键名”添加，例如 <strong>telemetry.BATTERY</strong>。</div>
+                    <div class="preset-row" aria-label="PID 曲线预设">
+                        <button class="small secondary preset-button" type="button" data-preset="tracking">循迹 PID</button>
+                        <button class="small secondary preset-button" type="button" data-preset="leftSpeed">左轮速度 PI</button>
+                        <button class="small secondary preset-button" type="button" data-preset="rightSpeed">右轮速度 PI</button>
+                        <button class="small secondary preset-button" type="button" data-preset="compare">左右对比</button>
+                    </div>
+                </div>
+                <div id="fieldList" class="field-list"></div>
+            </aside>
+        </div>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script>
+        "use strict";
+
+        const CHANNEL_NAME = "tracking-debugger-pid-chart-v1";
+        const STORAGE_KEY = "trackingDebugger.pidChart.settings.v1";
+        const MAX_HISTORY_MS = 120000;
+        const MAX_SELECTED_FIELDS = 10;
+        const COLOR_PALETTE = ["#0d9488", "#2563eb", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#475569", "#ea580c"];
+
+        const FIELD_INFO = {
+            "telemetry.ERR": { label: "循迹位置误差", group: "循迹 PID", unit: "" },
+            "telemetry.PWM_L": { label: "左轮 PWM", group: "电机与编码器", unit: "" },
+            "telemetry.PWM_R": { label: "右轮 PWM", group: "电机与编码器", unit: "" },
+            "telemetry.ENC_L": { label: "左轮实际速度", group: "电机与编码器", unit: "CPS" },
+            "telemetry.ENC_R": { label: "右轮实际速度", group: "电机与编码器", unit: "CPS" },
+            "telemetry.TARGET_L": { label: "左轮目标速度", group: "电机与编码器", unit: "CPS" },
+            "telemetry.TARGET_R": { label: "右轮目标速度", group: "电机与编码器", unit: "CPS" },
+            "derived.ENC_ERROR_L": { label: "左轮速度误差", group: "PID 派生量", unit: "CPS" },
+            "derived.ENC_ERROR_R": { label: "右轮速度误差", group: "PID 派生量", unit: "CPS" },
+            "derived.ENC_AVG": { label: "左右轮平均速度", group: "PID 派生量", unit: "CPS" },
+            "derived.ENC_DIFF": { label: "左右轮速度差", group: "PID 派生量", unit: "CPS" },
+            "derived.TARGET_AVG": { label: "左右轮平均目标", group: "PID 派生量", unit: "CPS" },
+            "derived.PWM_AVG": { label: "左右轮平均 PWM", group: "PID 派生量", unit: "" },
+            "derived.PWM_DIFF": { label: "左右轮 PWM 差", group: "PID 派生量", unit: "" },
+            "telemetry.CH1": { label: "CH1（−70 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH2": { label: "CH2（−50 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH3": { label: "CH3（−30 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH4": { label: "CH4（−10 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH5": { label: "CH5（+10 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH6": { label: "CH6（+30 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH7": { label: "CH7（+50 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.CH8": { label: "CH8（+70 mm）", group: "八路循迹传感器", unit: "" },
+            "telemetry.TRACKING_BASE_PWM": { label: "动态基础 PWM", group: "循迹 PID", unit: "PWM" },
+            "telemetry.TRACKING_STATE": { label: "循迹状态", group: "运行状态", unit: "" },
+            "telemetry.RUN": { label: "运行状态", group: "运行状态", unit: "" },
+            "telemetry.DRIVE_MODE": { label: "驱动模式", group: "运行状态", unit: "" },
+            "telemetry.ENCODER_CLOSED": { label: "编码器闭环状态", group: "运行状态", unit: "" },
+            "state.KP": { label: "循迹 Kp", group: "控制参数", unit: "" },
+            "state.KI": { label: "循迹 Ki", group: "控制参数", unit: "" },
+            "state.KD": { label: "循迹 Kd", group: "控制参数", unit: "" },
+            "state.SPEED": { label: "基础速度指令", group: "控制参数", unit: "" },
+            "state.LIMIT": { label: "循迹输出限幅", group: "控制参数", unit: "" },
+            "state.ENC_KP": { label: "编码器 Kp", group: "控制参数", unit: "" },
+            "state.ENC_KI": { label: "编码器 Ki", group: "控制参数", unit: "" },
+            "state.ENC_LIMIT": { label: "编码器输出限幅", group: "控制参数", unit: "" },
+            "imu.ROLL": { label: "横滚 Roll", group: "IMU 姿态", unit: "°" },
+            "imu.PITCH": { label: "俯仰 Pitch", group: "IMU 姿态", unit: "°" },
+            "imu.YAW": { label: "偏航 Yaw", group: "IMU 姿态", unit: "°" },
+            "imu.AX": { label: "加速度 X", group: "IMU 加速度", unit: "m/s²" },
+            "imu.AY": { label: "加速度 Y", group: "IMU 加速度", unit: "m/s²" },
+            "imu.AZ": { label: "加速度 Z", group: "IMU 加速度", unit: "m/s²" },
+            "imu.GX": { label: "角速度 X", group: "IMU 角速度", unit: "rad/s" },
+            "imu.GY": { label: "角速度 Y", group: "IMU 角速度", unit: "rad/s" },
+            "imu.GZ": { label: "角速度 Z", group: "IMU 角速度", unit: "rad/s" }
+        };
+
+        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "PID 派生量", "控制参数", "八路循迹传感器", "IMU 姿态", "IMU 加速度", "IMU 角速度", "运行状态", "遥测扩展", "IMU 扩展", "状态扩展", "自定义"];
+        const PRESETS = {
+            tracking: ["telemetry.ERR", "telemetry.PWM_L", "telemetry.PWM_R"],
+            leftSpeed: ["telemetry.TARGET_L", "telemetry.ENC_L", "derived.ENC_ERROR_L", "telemetry.PWM_L"],
+            rightSpeed: ["telemetry.TARGET_R", "telemetry.ENC_R", "derived.ENC_ERROR_R", "telemetry.PWM_R"],
+            compare: ["telemetry.TARGET_L", "telemetry.TARGET_R", "telemetry.ENC_L", "telemetry.ENC_R"]
+        };
+
+        const elements = {
+            sourceStatus: document.getElementById("sourceStatus"),
+            sourceStatusText: document.getElementById("sourceStatusText"),
+            backButton: document.getElementById("backButton"),
+            demoButton: document.getElementById("demoButton"),
+            timeWindow: document.getElementById("timeWindow"),
+            sampleRate: document.getElementById("sampleRate"),
+            scaleMode: document.getElementById("scaleMode"),
+            manualRange: document.getElementById("manualRange"),
+            yMin: document.getElementById("yMin"),
+            yMax: document.getElementById("yMax"),
+            pauseButton: document.getElementById("pauseButton"),
+            clearButton: document.getElementById("clearButton"),
+            exportButton: document.getElementById("exportButton"),
+            canvas: document.getElementById("pidCanvas"),
+            chartWrap: document.getElementById("chartWrap"),
+            tooltip: document.getElementById("chartTooltip"),
+            legend: document.getElementById("legend"),
+            axisSummary: document.getElementById("axisSummary"),
+            sampleSummary: document.getElementById("sampleSummary"),
+            selectedCount: document.getElementById("selectedCount"),
+            deselectAllButton: document.getElementById("deselectAllButton"),
+            fieldSearch: document.getElementById("fieldSearch"),
+            customField: document.getElementById("customField"),
+            addCustomButton: document.getElementById("addCustomButton"),
+            fieldList: document.getElementById("fieldList"),
+            toast: document.getElementById("toast")
+        };
+
+        function loadSettings() {
+            try {
+                const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "null");
+                if (saved && typeof saved === "object") return saved;
+            } catch (error) { /* file:// 下本地存储可能不可用。 */ }
+            return {};
+        }
+
+        const savedSettings = loadSettings();
+        const defaultSelection = ["telemetry.ERR", "derived.ENC_ERROR_L", "derived.ENC_ERROR_R"];
+        const state = {
+            values: new Map(),
+            fields: new Map(Object.entries(FIELD_INFO)),
+            selected: new Set(Array.isArray(savedSettings.selected) ? savedSettings.selected : defaultSelection),
+            colors: savedSettings.colors && typeof savedSettings.colors === "object" ? savedSettings.colors : {},
+            samples: [],
+            paused: false,
+            pausedAt: 0,
+            demo: false,
+            demoStartedAt: 0,
+            demoModel: { left: 0, right: 0, lastAt: 0 },
+            preDemoSelection: null,
+            lastDataAt: 0,
+            lastPacketSource: "",
+            connection: { connected: false, message: "等待主调试器", reconnecting: false },
+            dirty: true,
+            hoverX: null,
+            toastTimer: null
+        };
+
+        function normalizeFieldId(rawValue) {
+            const text = String(rawValue || "").trim();
+            if (!text) return "";
+            const dotAt = text.indexOf(".");
+            if (dotAt < 1 || dotAt === text.length - 1) return "";
+            const source = text.slice(0, dotAt).trim().toLowerCase();
+            const key = text.slice(dotAt + 1).trim().toUpperCase().replace(/\s+/g, "_");
+            return source && key ? `${source}.${key}` : "";
+        }
+
+        function fallbackFieldInfo(id) {
+            const [source, ...keyParts] = id.split(".");
+            const key = keyParts.join(".");
+            const groupNames = { telemetry: "遥测扩展", imu: "IMU 扩展", state: "状态扩展", derived: "PID 派生量" };
+            return { label: key.replace(/_/g, " "), group: groupNames[source] || "自定义", unit: "" };
+        }
+
+        function fieldInfo(id) { return state.fields.get(id) || fallbackFieldInfo(id); }
+
+        function fieldColor(id) {
+            if (!state.colors[id]) {
+                const allIds = [...state.fields.keys()].sort();
+                const index = Math.max(0, allIds.indexOf(id));
+                state.colors[id] = COLOR_PALETTE[index % COLOR_PALETTE.length];
+            }
+            return state.colors[id];
+        }
+
+        function formatValue(value) {
+            if (!Number.isFinite(value)) return "--";
+            const absolute = Math.abs(value);
+            if (absolute >= 10000) return value.toFixed(0);
+            if (absolute >= 100) return value.toFixed(1).replace(/\.0$/, "");
+            if (absolute >= 1) return value.toFixed(3).replace(/\.?0+$/, "");
+            if (absolute === 0) return "0";
+            return value.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+        }
+
+        function showToast(message) {
+            elements.toast.textContent = message;
+            elements.toast.classList.add("show");
+            if (state.toastTimer) window.clearTimeout(state.toastTimer);
+            state.toastTimer = window.setTimeout(() => elements.toast.classList.remove("show"), 2600);
+        }
+
+        function saveSettings() {
+            const settings = {
+                selected: [...state.selected],
+                colors: state.colors,
+                timeWindow: elements.timeWindow.value,
+                sampleRate: elements.sampleRate.value,
+                scaleMode: elements.scaleMode.value,
+                yMin: elements.yMin.value,
+                yMax: elements.yMax.value
+            };
+            try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); } catch (error) { /* 非关键设置。 */ }
+        }
+
+        function restoreControlSettings() {
+            ["timeWindow", "sampleRate", "scaleMode"].forEach(key => {
+                const element = elements[key];
+                if (savedSettings[key] !== undefined && [...element.options].some(option => option.value === String(savedSettings[key]))) {
+                    element.value = String(savedSettings[key]);
+                }
+            });
+            if (savedSettings.yMin !== undefined) elements.yMin.value = savedSettings.yMin;
+            if (savedSettings.yMax !== undefined) elements.yMax.value = savedSettings.yMax;
+            elements.manualRange.classList.toggle("show", elements.scaleMode.value === "fixed");
+        }
+
+        function setSelectedFields(ids, persist = true) {
+            state.selected = new Set(ids.map(normalizeFieldId).filter(Boolean).slice(0, MAX_SELECTED_FIELDS));
+            state.selected.forEach(id => {
+                if (!state.fields.has(id)) state.fields.set(id, fallbackFieldInfo(id));
+                fieldColor(id);
+            });
+            state.samples = [];
+            renderFieldList();
+            renderLegend();
+            updateSelectionSummary();
+            if (persist) saveSettings();
+            scheduleDraw();
+        }
+
+        function toggleField(id, checked) {
+            if (checked && !state.selected.has(id) && state.selected.size >= MAX_SELECTED_FIELDS) {
+                showToast(`为保证图表清晰，最多同时显示 ${MAX_SELECTED_FIELDS} 条曲线`);
+                renderFieldList();
+                return;
+            }
+            if (checked) state.selected.add(id); else state.selected.delete(id);
+            fieldColor(id);
+            updateSelectionSummary();
+            renderLegend();
+            renderFieldList();
+            saveSettings();
+            scheduleDraw();
+        }
+
+        function updateSelectionSummary() {
+            elements.selectedCount.textContent = `已选择 ${state.selected.size} 项（最多 ${MAX_SELECTED_FIELDS} 项）`;
+            elements.sampleSummary.textContent = `${state.selected.size} 条曲线 · ${state.samples.length} 个采样点`;
+        }
+
+        function renderFieldList() {
+            const query = elements.fieldSearch.value.trim().toLowerCase();
+            const groups = new Map();
+            [...state.fields.entries()].forEach(([id, info]) => {
+                const searchable = `${id} ${info.label} ${info.group}`.toLowerCase();
+                if (query && !searchable.includes(query)) return;
+                if (!groups.has(info.group)) groups.set(info.group, []);
+                groups.get(info.group).push({ id, info });
+            });
+
+            elements.fieldList.replaceChildren();
+            const sortedGroups = [...groups.entries()].sort((a, b) => {
+                const aIndex = GROUP_ORDER.indexOf(a[0]);
+                const bIndex = GROUP_ORDER.indexOf(b[0]);
+                return (aIndex < 0 ? 999 : aIndex) - (bIndex < 0 ? 999 : bIndex) || a[0].localeCompare(b[0], "zh-CN");
+            });
+
+            if (!sortedGroups.length) {
+                const empty = document.createElement("div");
+                empty.className = "empty-fields";
+                empty.textContent = "没有匹配的数据字段。可输入“类别.键名”添加自定义字段。";
+                elements.fieldList.appendChild(empty);
+                return;
+            }
+
+            sortedGroups.forEach(([groupName, items]) => {
+                const group = document.createElement("section");
+                group.className = "field-group";
+                const title = document.createElement("div");
+                title.className = "field-group-title";
+                const titleName = document.createElement("span");
+                titleName.textContent = groupName;
+                const count = document.createElement("span");
+                count.textContent = `${items.length} 项`;
+                title.append(titleName, count);
+                group.appendChild(title);
+
+                items.sort((a, b) => a.info.label.localeCompare(b.info.label, "zh-CN")).forEach(({ id, info }) => {
+                    const row = document.createElement("label");
+                    row.className = "field-row";
+                    row.classList.toggle("selected", state.selected.has(id));
+                    row.classList.toggle("waiting", !state.values.has(id));
+                    row.title = state.values.has(id) ? id : `${id}（等待数据）`;
+
+                    const checkbox = document.createElement("input");
+                    checkbox.className = "field-check";
+                    checkbox.type = "checkbox";
+                    checkbox.checked = state.selected.has(id);
+                    checkbox.addEventListener("change", () => toggleField(id, checkbox.checked));
+
+                    const copy = document.createElement("div");
+                    copy.className = "field-copy";
+                    const nameLine = document.createElement("div");
+                    nameLine.className = "field-name-line";
+                    const name = document.createElement("span");
+                    name.className = "field-name";
+                    name.textContent = info.label;
+                    const value = document.createElement("span");
+                    value.className = "field-value";
+                    const currentValue = state.values.get(id);
+                    value.textContent = Number.isFinite(currentValue) ? formatValue(currentValue) + (info.unit ? ` ${info.unit}` : "") : "等待";
+                    nameLine.append(name, value);
+                    const key = document.createElement("div");
+                    key.className = "field-key";
+                    key.textContent = id;
+                    copy.append(nameLine, key);
+
+                    const color = document.createElement("input");
+                    color.className = "field-color";
+                    color.type = "color";
+                    color.value = fieldColor(id);
+                    color.title = `设置 ${info.label} 的曲线颜色`;
+                    color.setAttribute("aria-label", `设置 ${info.label} 的曲线颜色`);
+                    color.addEventListener("click", event => event.stopPropagation());
+                    color.addEventListener("input", () => {
+                        state.colors[id] = color.value;
+                        renderLegend();
+                        saveSettings();
+                        scheduleDraw();
+                    });
+
+                    row.append(checkbox, copy, color);
+                    group.appendChild(row);
+                });
+                elements.fieldList.appendChild(group);
+            });
+        }
+
+        function refreshVisibleFieldValues() {
+            elements.fieldList.querySelectorAll(".field-row").forEach(row => {
+                const keyNode = row.querySelector(".field-key");
+                const valueNode = row.querySelector(".field-value");
+                if (!keyNode || !valueNode) return;
+                const id = keyNode.textContent;
+                const value = state.values.get(id);
+                const info = fieldInfo(id);
+                row.classList.toggle("waiting", !Number.isFinite(value));
+                valueNode.textContent = Number.isFinite(value) ? formatValue(value) + (info.unit ? ` ${info.unit}` : "") : "等待";
+            });
+        }
+
+        function registerValues(values, timestamp = Date.now(), source = "") {
+            if (!values || typeof values !== "object") return;
+            let discovered = false;
+            let receivedCount = 0;
+            Object.entries(values).forEach(([rawId, rawValue]) => {
+                const id = normalizeFieldId(rawId);
+                const value = Number(rawValue);
+                if (!id || !Number.isFinite(value)) return;
+                if (!state.fields.has(id)) {
+                    state.fields.set(id, fallbackFieldInfo(id));
+                    discovered = true;
+                }
+                state.values.set(id, value);
+                receivedCount += 1;
+            });
+            if (receivedCount) {
+                state.lastDataAt = Number(timestamp) || Date.now();
+                state.lastPacketSource = source || state.lastPacketSource;
+            }
+            if (discovered) renderFieldList(); else refreshVisibleFieldValues();
+            state.dirty = true;
+        }
+
+        function handleDebuggerMessage(message) {
+            if (!message || typeof message !== "object") return;
+            if (message.type === "tracking-debugger:data") {
+                if (!state.demo) registerValues(message.values, message.timestamp, message.source);
+                return;
+            }
+            if (message.type === "tracking-debugger:snapshot") {
+                if (!state.demo) registerValues(message.values, message.timestamp, "snapshot");
+                if (message.connection) state.connection = message.connection;
+                return;
+            }
+            if (message.type === "tracking-debugger:connection" && message.connection) {
+                state.connection = message.connection;
+            }
+        }
+
+        function sendReadySignal() {
+            const message = { type: "tracking-debugger:chart-ready", timestamp: Date.now() };
+            if (window.opener && !window.opener.closed) {
+                try { window.opener.postMessage(message, "*"); } catch (error) { /* 继续尝试广播通道。 */ }
+            }
+            if (broadcastChannel) {
+                try { broadcastChannel.postMessage(message); } catch (error) { /* file:// 下可能不可用。 */ }
+            }
+        }
+
+        let broadcastChannel = null;
+        try {
+            broadcastChannel = new BroadcastChannel(CHANNEL_NAME);
+            broadcastChannel.addEventListener("message", event => handleDebuggerMessage(event.data));
+        } catch (error) {
+            broadcastChannel = null;
+        }
+        window.addEventListener("message", event => handleDebuggerMessage(event.data));
+
+        function updateStatus() {
+            elements.sourceStatus.className = "status-pill";
+            if (state.demo) {
+                elements.sourceStatus.classList.add("demo");
+                elements.sourceStatusText.textContent = "模拟数据运行中";
+                return;
+            }
+            const age = Date.now() - state.lastDataAt;
+            if (state.lastDataAt && age < 1800) {
+                elements.sourceStatus.classList.add("live");
+                elements.sourceStatusText.textContent = `实时数据 · ${state.lastPacketSource || "遥测"}`;
+            } else if (state.connection.connected) {
+                elements.sourceStatus.classList.add("waiting");
+                elements.sourceStatusText.textContent = "串口已连接 · 等待遥测";
+            } else if (state.connection.reconnecting) {
+                elements.sourceStatus.classList.add("waiting");
+                elements.sourceStatusText.textContent = state.connection.message || "正在自动重连";
+            } else {
+                elements.sourceStatusText.textContent = state.connection.message || "等待主调试器";
+            }
+        }
+
+        function updateDemoValues(now) {
+            const model = state.demoModel;
+            const elapsed = (now - state.demoStartedAt) / 1000;
+            const dt = model.lastAt ? Math.min(0.1, (now - model.lastAt) / 1000) : 0.04;
+            model.lastAt = now;
+            const phase = Math.floor(elapsed / 4) % 2;
+            const targetLeft = phase ? 620 : 280;
+            const targetRight = phase ? 560 : 320;
+            const damping = phase ? 4.4 : 5.2;
+            model.left += (targetLeft - model.left) * Math.min(1, dt * damping);
+            model.right += (targetRight - model.right) * Math.min(1, dt * (damping - 0.5));
+            const overshoot = 46 * Math.exp(-1.3 * (elapsed % 4)) * Math.sin(8.4 * (elapsed % 4));
+            const left = model.left + overshoot + Math.sin(elapsed * 12) * 3;
+            const right = model.right + overshoot * 0.7 + Math.cos(elapsed * 10) * 4;
+            const values = {
+                "telemetry.ERR": Math.sin(elapsed * 1.8) * 520 + Math.sin(elapsed * 5.3) * 65,
+                "telemetry.TARGET_L": targetLeft,
+                "telemetry.TARGET_R": targetRight,
+                "telemetry.ENC_L": left,
+                "telemetry.ENC_R": right,
+                "telemetry.PWM_L": Math.max(-1000, Math.min(1000, 120 + (targetLeft - left) * 1.5)),
+                "telemetry.PWM_R": Math.max(-1000, Math.min(1000, 120 + (targetRight - right) * 1.5)),
+                "derived.ENC_ERROR_L": targetLeft - left,
+                "derived.ENC_ERROR_R": targetRight - right,
+                "derived.ENC_AVG": (left + right) / 2,
+                "derived.ENC_DIFF": left - right,
+                "derived.TARGET_AVG": (targetLeft + targetRight) / 2,
+                "derived.PWM_DIFF": (targetLeft - left) * 1.5 - (targetRight - right) * 1.5,
+                "state.KP": 0.42,
+                "state.KI": 0.08,
+                "state.KD": 0.12
+            };
+            registerValues(values, now, "demo");
+        }
+
+        function sampleData() {
+            const now = Date.now();
+            if (state.paused) return;
+            if (state.demo) updateDemoValues(now);
+            if (!state.demo && (!state.lastDataAt || now - state.lastDataAt > 1800)) return;
+            const values = {};
+            state.selected.forEach(id => {
+                const value = state.values.get(id);
+                if (Number.isFinite(value)) values[id] = value;
+            });
+            if (!Object.keys(values).length) return;
+            state.samples.push({ time: now, values });
+            const cutoff = now - MAX_HISTORY_MS;
+            while (state.samples.length && state.samples[0].time < cutoff) state.samples.shift();
+            updateSelectionSummary();
+            renderLegend();
+            scheduleDraw();
+        }
+
+        let sampleTimer = null;
+        function restartSampleTimer() {
+            if (sampleTimer) window.clearInterval(sampleTimer);
+            const rate = Math.max(1, Number(elements.sampleRate.value) || 25);
+            sampleTimer = window.setInterval(sampleData, 1000 / rate);
+        }
+
+        function visibleSamples() {
+            const end = state.paused ? state.pausedAt : Date.now();
+            const start = end - (Number(elements.timeWindow.value) || 10) * 1000;
+            return { start, end, samples: state.samples.filter(sample => sample.time >= start && sample.time <= end) };
+        }
+
+        function calculateAxis(samples) {
+            const values = [];
+            samples.forEach(sample => state.selected.forEach(id => {
+                const value = sample.values[id];
+                if (Number.isFinite(value)) values.push(value);
+            }));
+            if (!values.length) return { min: -1, max: 1 };
+
+            if (elements.scaleMode.value === "fixed") {
+                const min = Number(elements.yMin.value);
+                const max = Number(elements.yMax.value);
+                if (Number.isFinite(min) && Number.isFinite(max) && max > min) return { min, max };
+            }
+
+            let min = Math.min(...values);
+            let max = Math.max(...values);
+            if (elements.scaleMode.value === "symmetric") {
+                const extent = Math.max(Math.abs(min), Math.abs(max), 1) * 1.08;
+                return { min: -extent, max: extent };
+            }
+            min = Math.min(0, min);
+            max = Math.max(0, max);
+            if (max === min) { min -= 1; max += 1; }
+            const padding = (max - min) * 0.08;
+            return { min: min - padding, max: max + padding };
+        }
+
+        function resizeCanvas() {
+            const rect = elements.canvas.getBoundingClientRect();
+            const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+            const width = Math.max(320, Math.floor(rect.width * dpr));
+            const height = Math.max(300, Math.floor(rect.height * dpr));
+            if (elements.canvas.width !== width || elements.canvas.height !== height) {
+                elements.canvas.width = width;
+                elements.canvas.height = height;
+            }
+            return { width: rect.width, height: rect.height, dpr };
+        }
+
+        let drawScheduled = false;
+        function scheduleDraw() {
+            if (drawScheduled) return;
+            drawScheduled = true;
+            window.requestAnimationFrame(() => {
+                drawScheduled = false;
+                drawChart();
+            });
+        }
+
+        function drawChart() {
+            const { width, height, dpr } = resizeCanvas();
+            const context = elements.canvas.getContext("2d");
+            context.setTransform(dpr, 0, 0, dpr, 0, 0);
+            context.clearRect(0, 0, width, height);
+
+            const plot = { left: 68, right: width - 18, top: 24, bottom: height - 40 };
+            const plotWidth = Math.max(1, plot.right - plot.left);
+            const plotHeight = Math.max(1, plot.bottom - plot.top);
+            const visible = visibleSamples();
+            const axis = calculateAxis(visible.samples);
+            elements.axisSummary.textContent = `${formatValue(axis.min)} ～ ${formatValue(axis.max)}`;
+
+            context.fillStyle = "#ffffff";
+            context.fillRect(0, 0, width, height);
+            context.font = "11px Microsoft YaHei, sans-serif";
+            context.lineWidth = 1;
+
+            const yTicks = 6;
+            for (let index = 0; index <= yTicks; index += 1) {
+                const ratio = index / yTicks;
+                const y = plot.top + ratio * plotHeight;
+                const value = axis.max - ratio * (axis.max - axis.min);
+                context.strokeStyle = index === yTicks || index === 0 ? "#d4e0e8" : "#e8eef2";
+                context.beginPath();
+                context.moveTo(plot.left, y + 0.5);
+                context.lineTo(plot.right, y + 0.5);
+                context.stroke();
+                context.fillStyle = "#75889a";
+                context.textAlign = "right";
+                context.textBaseline = "middle";
+                context.fillText(formatValue(value), plot.left - 9, y);
+            }
+
+            const xTicks = 5;
+            for (let index = 0; index <= xTicks; index += 1) {
+                const ratio = index / xTicks;
+                const x = plot.left + ratio * plotWidth;
+                context.strokeStyle = "#edf2f5";
+                context.beginPath();
+                context.moveTo(x + 0.5, plot.top);
+                context.lineTo(x + 0.5, plot.bottom);
+                context.stroke();
+                const secondsAgo = ((visible.end - (visible.start + ratio * (visible.end - visible.start))) / 1000);
+                context.fillStyle = "#75889a";
+                context.textAlign = index === 0 ? "left" : (index === xTicks ? "right" : "center");
+                context.textBaseline = "top";
+                context.fillText(secondsAgo < 0.05 ? "现在" : `-${secondsAgo.toFixed(secondsAgo >= 10 ? 0 : 1)}s`, x, plot.bottom + 10);
+            }
+
+            context.save();
+            context.beginPath();
+            context.rect(plot.left, plot.top, plotWidth, plotHeight);
+            context.clip();
+
+            state.selected.forEach(id => {
+                context.strokeStyle = fieldColor(id);
+                context.lineWidth = 2;
+                context.lineJoin = "round";
+                context.lineCap = "round";
+                context.beginPath();
+                let drawing = false;
+                visible.samples.forEach(sample => {
+                    const value = sample.values[id];
+                    if (!Number.isFinite(value)) { drawing = false; return; }
+                    const x = plot.left + (sample.time - visible.start) / (visible.end - visible.start) * plotWidth;
+                    const y = plot.bottom - (value - axis.min) / (axis.max - axis.min) * plotHeight;
+                    if (!drawing) { context.moveTo(x, y); drawing = true; } else { context.lineTo(x, y); }
+                });
+                context.stroke();
+            });
+
+            if (axis.min < 0 && axis.max > 0) {
+                const zeroY = plot.bottom - (0 - axis.min) / (axis.max - axis.min) * plotHeight;
+                context.setLineDash([5, 5]);
+                context.strokeStyle = "rgba(71, 85, 105, 0.45)";
+                context.lineWidth = 1;
+                context.beginPath();
+                context.moveTo(plot.left, zeroY);
+                context.lineTo(plot.right, zeroY);
+                context.stroke();
+                context.setLineDash([]);
+            }
+
+            if (state.hoverX !== null && state.hoverX >= plot.left && state.hoverX <= plot.right) {
+                context.strokeStyle = "rgba(23, 34, 56, 0.48)";
+                context.lineWidth = 1;
+                context.beginPath();
+                context.moveTo(state.hoverX + 0.5, plot.top);
+                context.lineTo(state.hoverX + 0.5, plot.bottom);
+                context.stroke();
+            }
+            context.restore();
+
+            if (!state.selected.size || !visible.samples.length) {
+                context.fillStyle = "#8193a3";
+                context.textAlign = "center";
+                context.textBaseline = "middle";
+                context.font = "600 14px Microsoft YaHei, sans-serif";
+                const message = !state.selected.size ? "请从右侧选择要显示的数据" : "等待已选字段的实时数据";
+                context.fillText(message, plot.left + plotWidth / 2, plot.top + plotHeight / 2);
+            }
+        }
+
+        function renderLegend() {
+            elements.legend.replaceChildren();
+            if (!state.selected.size) {
+                const empty = document.createElement("div");
+                empty.className = "legend-empty";
+                empty.textContent = "从右侧选择数据后，这里会显示当前值、最小值、最大值和平均值。";
+                elements.legend.appendChild(empty);
+                return;
+            }
+            const visible = visibleSamples().samples;
+            state.selected.forEach(id => {
+                const info = fieldInfo(id);
+                const values = visible.map(sample => sample.values[id]).filter(Number.isFinite);
+                const current = state.values.get(id);
+                const min = values.length ? Math.min(...values) : NaN;
+                const max = values.length ? Math.max(...values) : NaN;
+                const average = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
+
+                const card = document.createElement("article");
+                card.className = "legend-card";
+                const title = document.createElement("div");
+                title.className = "legend-title";
+                const line = document.createElement("span");
+                line.className = "legend-line";
+                line.style.background = fieldColor(id);
+                const name = document.createElement("span");
+                name.className = "legend-name";
+                name.title = id;
+                name.textContent = info.label;
+                const currentNode = document.createElement("strong");
+                currentNode.className = "legend-current";
+                currentNode.textContent = formatValue(current);
+                title.append(line, name, currentNode);
+
+                const stats = document.createElement("div");
+                stats.className = "legend-stats";
+                [["最小", min], ["平均", average], ["最大", max]].forEach(([label, value]) => {
+                    const item = document.createElement("span");
+                    item.textContent = label;
+                    const strong = document.createElement("strong");
+                    strong.textContent = formatValue(value);
+                    item.appendChild(strong);
+                    stats.appendChild(item);
+                });
+                card.append(title, stats);
+                elements.legend.appendChild(card);
+            });
+        }
+
+        function showTooltipAt(clientX) {
+            const rect = elements.canvas.getBoundingClientRect();
+            const localX = clientX - rect.left;
+            state.hoverX = localX;
+            const plotLeft = 68;
+            const plotRight = rect.width - 18;
+            if (localX < plotLeft || localX > plotRight) {
+                elements.tooltip.hidden = true;
+                scheduleDraw();
+                return;
+            }
+            const visible = visibleSamples();
+            if (!visible.samples.length) { elements.tooltip.hidden = true; return; }
+            const targetTime = visible.start + (localX - plotLeft) / (plotRight - plotLeft) * (visible.end - visible.start);
+            let nearest = visible.samples[0];
+            visible.samples.forEach(sample => {
+                if (Math.abs(sample.time - targetTime) < Math.abs(nearest.time - targetTime)) nearest = sample;
+            });
+
+            elements.tooltip.replaceChildren();
+            const time = document.createElement("div");
+            time.className = "tooltip-time";
+            time.textContent = new Date(nearest.time).toLocaleTimeString("zh-CN", { hour12: false }) + "." + String(new Date(nearest.time).getMilliseconds()).padStart(3, "0");
+            elements.tooltip.appendChild(time);
+            state.selected.forEach(id => {
+                const value = nearest.values[id];
+                if (!Number.isFinite(value)) return;
+                const row = document.createElement("div");
+                row.className = "tooltip-row";
+                const color = document.createElement("span");
+                color.className = "tooltip-color";
+                color.style.background = fieldColor(id);
+                const label = document.createElement("span");
+                label.className = "tooltip-label";
+                label.textContent = fieldInfo(id).label;
+                const valueNode = document.createElement("span");
+                valueNode.className = "tooltip-value";
+                valueNode.textContent = formatValue(value);
+                row.append(color, label, valueNode);
+                elements.tooltip.appendChild(row);
+            });
+            elements.tooltip.hidden = false;
+            const tooltipWidth = elements.tooltip.offsetWidth || 220;
+            const preferredLeft = localX + 12;
+            elements.tooltip.style.left = (preferredLeft + tooltipWidth > rect.width - 8 ? localX - tooltipWidth - 12 : preferredLeft) + "px";
+            elements.tooltip.style.top = Math.max(45, Math.min(rect.height - 45, rect.height / 2)) + "px";
+            elements.tooltip.style.transform = "translateY(-50%)";
+            scheduleDraw();
+        }
+
+        function addCustomField() {
+            const id = normalizeFieldId(elements.customField.value);
+            if (!id) {
+                showToast("请输入“类别.键名”，例如 telemetry.TEMP");
+                elements.customField.focus();
+                return;
+            }
+            if (!state.fields.has(id)) state.fields.set(id, fallbackFieldInfo(id));
+            elements.customField.value = "";
+            if (state.selected.size < MAX_SELECTED_FIELDS) state.selected.add(id);
+            renderFieldList();
+            renderLegend();
+            updateSelectionSummary();
+            saveSettings();
+            showToast(`已添加 ${id}，收到该数字键后会自动绘图`);
+        }
+
+        function exportCsv() {
+            const ids = [...state.selected];
+            if (!ids.length || !state.samples.length) { showToast("当前没有可导出的图表数据"); return; }
+            const visible = visibleSamples().samples;
+            if (!visible.length) { showToast("当前时间窗口内没有数据"); return; }
+            const escape = value => `"${String(value).replace(/"/g, '""')}"`;
+            const header = ["timestamp", "elapsed_s", ...ids].map(escape).join(",");
+            const firstTime = visible[0].time;
+            const rows = visible.map(sample => [
+                new Date(sample.time).toISOString(),
+                ((sample.time - firstTime) / 1000).toFixed(3),
+                ...ids.map(id => Number.isFinite(sample.values[id]) ? sample.values[id] : "")
+            ].map(escape).join(","));
+            const blob = new Blob(["\uFEFF" + [header, ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `PID-chart-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+            showToast(`已导出 ${visible.length} 行数据`);
+        }
+
+        function toggleDemo() {
+            state.demo = !state.demo;
+            state.samples = [];
+            if (state.demo) {
+                state.preDemoSelection = [...state.selected];
+                state.demoStartedAt = Date.now();
+                state.demoModel = { left: 0, right: 0, lastAt: 0 };
+                elements.demoButton.textContent = "停止模拟数据";
+                setSelectedFields(PRESETS.leftSpeed, false);
+            } else {
+                elements.demoButton.textContent = "试用模拟数据";
+                state.lastDataAt = 0;
+                setSelectedFields(state.preDemoSelection || defaultSelection);
+                state.preDemoSelection = null;
+                sendReadySignal();
+            }
+            updateStatus();
+            scheduleDraw();
+        }
+
+        elements.backButton.addEventListener("click", () => {
+            if (window.opener && !window.opener.closed) {
+                window.opener.focus();
+            } else {
+                window.location.href = new URL("TrackingBluetoothDebugger.html", window.location.href).href;
+            }
+        });
+        elements.demoButton.addEventListener("click", toggleDemo);
+        elements.pauseButton.addEventListener("click", () => {
+            state.paused = !state.paused;
+            if (state.paused) state.pausedAt = Date.now();
+            elements.pauseButton.textContent = state.paused ? "继续" : "暂停";
+            elements.pauseButton.classList.toggle("danger", state.paused);
+            renderLegend();
+            scheduleDraw();
+        });
+        elements.clearButton.addEventListener("click", () => {
+            state.samples = [];
+            elements.tooltip.hidden = true;
+            renderLegend();
+            updateSelectionSummary();
+            scheduleDraw();
+        });
+        elements.exportButton.addEventListener("click", exportCsv);
+        elements.scaleMode.addEventListener("change", () => {
+            elements.manualRange.classList.toggle("show", elements.scaleMode.value === "fixed");
+            saveSettings();
+            scheduleDraw();
+        });
+        [elements.timeWindow, elements.yMin, elements.yMax].forEach(element => element.addEventListener("change", () => {
+            saveSettings();
+            renderLegend();
+            scheduleDraw();
+        }));
+        elements.sampleRate.addEventListener("change", () => { saveSettings(); restartSampleTimer(); });
+        elements.fieldSearch.addEventListener("input", renderFieldList);
+        elements.addCustomButton.addEventListener("click", addCustomField);
+        elements.customField.addEventListener("keydown", event => {
+            if (event.key === "Enter") { event.preventDefault(); addCustomField(); }
+        });
+        elements.deselectAllButton.addEventListener("click", () => setSelectedFields([]));
+        document.querySelectorAll(".preset-button").forEach(button => {
+            button.addEventListener("click", () => setSelectedFields(PRESETS[button.dataset.preset] || []));
+        });
+        elements.canvas.addEventListener("pointermove", event => showTooltipAt(event.clientX));
+        elements.canvas.addEventListener("pointerleave", () => {
+            state.hoverX = null;
+            elements.tooltip.hidden = true;
+            scheduleDraw();
+        });
+
+        const resizeObserver = new ResizeObserver(scheduleDraw);
+        resizeObserver.observe(elements.chartWrap);
+        window.addEventListener("beforeunload", () => {
+            if (sampleTimer) window.clearInterval(sampleTimer);
+            if (broadcastChannel) broadcastChannel.close();
+            resizeObserver.disconnect();
+        });
+
+        restoreControlSettings();
+        state.selected.forEach(id => {
+            if (!state.fields.has(id)) state.fields.set(id, fallbackFieldInfo(id));
+            fieldColor(id);
+        });
+        renderFieldList();
+        renderLegend();
+        updateSelectionSummary();
+        restartSampleTimer();
+        scheduleDraw();
+        sendReadySignal();
+        window.setTimeout(sendReadySignal, 500);
+        window.setInterval(updateStatus, 400);
+    </script>
+</body>
+</html>

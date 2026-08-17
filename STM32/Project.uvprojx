@@ -336,7 +336,7 @@
               <MiscControls>--no-multibyte-chars</MiscControls>
               <Define>USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>.\Start;.\Library;.\User;.\System;.\Hardware</IncludePath>
+              <IncludePath>.\Start;.\Library;.\User;.\System;.\Hardware;.\App</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -709,6 +709,51 @@
               <FileName>Serial.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\Hardware\Serial.h</FilePath>
+            </File>
+            <File>
+              <FileName>Encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\Encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>Encoder.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Hardware\Encoder.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>App</GroupName>
+          <Files>
+            <File>
+              <FileName>SimplePID.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\SimplePID.c</FilePath>
+            </File>
+            <File>
+              <FileName>SimplePID.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\SimplePID.h</FilePath>
+            </File>
+            <File>
+              <FileName>DriveControl.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\DriveControl.c</FilePath>
+            </File>
+            <File>
+              <FileName>DriveControl.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\DriveControl.h</FilePath>
+            </File>
+            <File>
+              <FileName>DebugProtocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\DebugProtocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>DebugProtocol.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\DebugProtocol.h</FilePath>
             </File>
           </Files>
         </Group>

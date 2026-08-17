@@ -1,34 +1,36 @@
 #include "stm32f10x.h"                  // Device header
 #include "Delay.h"
-#include "OLED.h"
 #include "Serial.h"
+#include "DriveControl.h"
+#include "DebugProtocol.h"
 
 int main(void)
 {
-	OLED_Init();
-	
 	Serial_Init();
-	
-	Serial_SendByte(0x41);
-	
-	uint8_t MyArray[] = {0x42, 0x43, 0x44, 0x45};
-	Serial_SendArray(MyArray, 4);
-	
-	Serial_SendString("\r\nNum1=");
-	
-	Serial_SendNumber(111, 3);
-	
-	printf("\r\nNum2=%d", 222);
-	
-	char String[100];
-	sprintf(String, "\r\nNum3=%d", 333);
-	Serial_SendString(String);
-	
-	Serial_Printf("\r\nNum4=%d", 444);
-	Serial_Printf("\r\n");
-	
+	DriveControl_Init();
+	DebugProtocol_Init();
+	DebugProtocol_SendState();
+
 	while (1)
 	{
-		
+		static uint16_t controlTick = 0U;
+		static uint16_t telemetryTick = 0U;
+
+		DebugProtocol_Run();
+		Delay_ms(1);
+
+		controlTick++;
+		telemetryTick++;
+
+		if (controlTick >= 10U)
+		{
+			DriveControl_Update(controlTick);
+			controlTick = 0U;
+		}
+		if (telemetryTick >= 50U)
+		{
+			DebugProtocol_SendTelemetry();
+			telemetryTick = 0U;
+		}
 	}
 }

@@ -1,0 +1,295 @@
+        "use strict";
+
+        function parseKeyValues(payload) {
+            const values = {};
+            String(payload).split(",").forEach(part => {
+                const item = part.trim();
+                const equalAt = item.indexOf("=");
+                if (equalAt <= 0) return;
+                const key = item.slice(0, equalAt).trim().toUpperCase();
+                const value = item.slice(equalAt + 1).trim();
+                if (key) values[key] = value;
+            });
+            return values;
+        }
+
+        function expandKeyAliases(values, aliases) {
+            const expanded = { ...values };
+            Object.entries(aliases).forEach(([shortName, fullName]) => {
+                if (expanded[fullName] === undefined && values[shortName] !== undefined) {
+                    expanded[fullName] = values[shortName];
+                }
+            });
+            return expanded;
+        }
+
+        function setInputValue(id, value) {
+            if (value === undefined || value === "") return;
+            document.getElementById(id).value = value;
+        }
+
+        function setImuNumber(id, value) {
+            if (value === undefined) return;
+            const number = Number(value);
+            document.getElementById(id).textContent = Number.isFinite(number) ? number.toFixed(3) : "--";
+        }
+
+        function setAttitudeVisualState(state, text) {
+            elements.attitudeStage.classList.toggle("live", state === "live");
+            elements.attitudeStage.classList.toggle("stale", state === "stale");
+            elements.attitudeStatusText.textContent = text;
+            const statePill = document.getElementById("imuState");
+            statePill.classList.toggle("ready", state === "live");
+            statePill.textContent = state === "live"
+                ? "实时姿态"
+                : (state === "stale" ? "数据超时" : "等待遥测");
+        }
+
+        function angleDelta(next, previous) {
+            return ((next - previous + 540) % 360) - 180;
+        }
+
+        function trackAttitudeAngle(name, nextValue) {
+            const tracker = attitudeAngles[name];
+            if (tracker.raw === null) {
+                tracker.raw = nextValue;
+                tracker.continuous = nextValue;
+                return;
+            }
+
+            tracker.continuous += angleDelta(nextValue, tracker.raw);
+            tracker.raw = nextValue;
+        }
+
+        function renderAttitudeModel() {
+            const roll = attitudeAngles.roll.continuous - attitudeZero.roll;
+            const pitch = attitudeAngles.pitch.continuous - attitudeZero.pitch;
+            const yaw = attitudeAngles.yaw.continuous - attitudeZero.yaw;
+            const displayRoll = attitudeView.lockedTop ? 0 : roll;
+            const displayPitch = attitudeView.lockedTop ? 0 : pitch;
+            const displayYaw = yaw;
+
+            /* 实物坐标：+X 沿模组板面向下，+Y 沿板面向左，+Z 垂直板面向上；Pitch 符号按实测方向校正。 */
+            elements.attitudeModel.style.transform =
+                `rotateZ(${-displayYaw}deg) rotateX(${displayPitch}deg) rotateY(${displayRoll}deg)`;
+            elements.attitudeAxisLabels.forEach(label => {
+                label.style.transform =
+                    `rotateY(${-displayRoll}deg) rotateX(${-displayPitch}deg) rotateZ(${displayYaw}deg) ` +
+                    `rotateZ(${-attitudeView.yaw}deg) rotateX(${-attitudeView.pitch}deg)`;
+            });
+            elements.attitudeStage.setAttribute(
+                "aria-label",
+                (attitudeHasData
+                    ? `IMU 模组实时姿态：横滚 ${roll.toFixed(1)} 度，俯仰 ${pitch.toFixed(1)} 度，偏航 ${yaw.toFixed(1)} 度`
+                    : "等待姿态传感器数据") +
+                    (attitudeView.lockedTop ? "；当前为固定俯视" : "；可用鼠标或触摸拖动改变观察视角")
+            );
+        }
+
+        function renderAttitudeView() {
+            elements.attitudeCamera.style.setProperty("--view-pitch", attitudeView.pitch + "deg");
+            elements.attitudeCamera.style.setProperty("--view-yaw", attitudeView.yaw + "deg");
+            renderAttitudeModel();
+        }
+
+        function wrapDegrees360(value) {
+            return ((value % 360) + 360) % 360;
+        }
+
+        function wrapDegreesSigned(value) {
+            return ((value + 540) % 360) - 180;
+        }
+
+        /**
+         * 清除浏览器保存的 MCU 角度快照。
+         * 这里只复位显示，不会发送 ANGLE ZERO，也不会改变三维模型的姿态显示零位。
+         */
+        function resetVehicleYawReference() {
+            currentAngleHeading = null;
+            currentAngleError = 0;
+            currentAngleOutput = 0;
+            currentAngleState = 0;
+            angleControlReady = false;
+            angleZeroYaw = null;
+            elements.vehicleYawCar.style.setProperty("--vehicle-yaw", "0deg");
+            elements.vehicleYawValue.textContent = "--";
+            elements.vehicleYawInitial.textContent = "--";
+            elements.vehicleYawCurrent.textContent = "--";
+            elements.vehicleYawTarget.textContent = "--";
+            elements.vehicleYawError.textContent = "--";
+            elements.vehicleYawOutput.textContent = "--";
+            elements.vehicleYawControlState.textContent = "--";
+            elements.vehicleYawState.textContent = "等待车端零位";
+            elements.vehicleYawState.classList.remove("ready");
+            elements.vehicleYawStage.setAttribute("aria-label", "等待车端角度状态和零位");
+            elements.resetVehicleYawButton.disabled = true;
+            renderAngleRuntime();
+        }
+
+        function updateAttitudeVisualization(values) {
+            const roll = Number(values.ROLL);
+            const pitch = Number(values.PITCH);
+            const yaw = Number(values.YAW);
+            if (![roll, pitch, yaw].every(Number.isFinite)) return;
+
+            trackAttitudeAngle("roll", roll);
+            trackAttitudeAngle("pitch", pitch);
+            trackAttitudeAngle("yaw", yaw);
+            /* I 帧原始 Yaw 只用于诊断；控制方位 AH 由独立的 S/T 帧更新。 */
+            elements.vehicleYawCurrent.textContent = yaw.toFixed(1) + "°";
+
+            const now = Date.now();
+            if (lastAttitudeAt) {
+                const instantRate = 1000 / Math.max(1, now - lastAttitudeAt);
+                attitudeRateHz = attitudeRateHz
+                    ? attitudeRateHz * 0.7 + instantRate * 0.3
+                    : instantRate;
+                elements.attitudeRate.textContent = attitudeRateHz.toFixed(1) + " Hz";
+            }
+            lastAttitudeAt = now;
+            attitudeHasData = true;
+            elements.zeroAttitudeButton.disabled = false;
+            setAttitudeVisualState("live", "实时姿态");
+            renderAttitudeModel();
+        }
+
+        function applyTelemetry(values) {
+            if (values.RUN !== undefined) setRunState(values.RUN);
+            if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
+            /* T 帧提供 AH/AE/AO/AS/AR，合并后立即更新角度控制可视化。 */
+            setAngleRuntime(values);
+            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            if (values.SENS !== undefined) setSensorBits(values.SENS);
+            setTrackingRuntime(values);
+            if (values.ERR !== undefined) document.getElementById("errorValue").textContent = values.ERR;
+
+            if (values.PWM_L !== undefined) {
+                document.getElementById("pwmLeft").textContent = values.PWM_L;
+                setSignedBar("pwmLeftBar", values.PWM_L);
+            }
+            if (values.PWM_R !== undefined) {
+                document.getElementById("pwmRight").textContent = values.PWM_R;
+                setSignedBar("pwmRightBar", values.PWM_R);
+            }
+            if (values.ENC_L !== undefined) document.getElementById("encoderLeft").textContent = values.ENC_L;
+            if (values.ENC_R !== undefined) document.getElementById("encoderRight").textContent = values.ENC_R;
+            if (values.TARGET_L !== undefined) document.getElementById("targetLeft").textContent = values.TARGET_L;
+            if (values.TARGET_R !== undefined) document.getElementById("targetRight").textContent = values.TARGET_R;
+            renderLiveControlChain();
+
+            lastTelemetryAt = Date.now();
+            document.getElementById("telemetryAge").textContent = "刚刚";
+        }
+
+        function applyImu(values) {
+            const attitude = [values.ROLL, values.PITCH, values.YAW].map(Number);
+            if (!attitude.every(Number.isFinite)) return;
+
+            setImuNumber("imuRoll", values.ROLL);
+            setImuNumber("imuPitch", values.PITCH);
+            setImuNumber("imuYaw", values.YAW);
+            updateAttitudeVisualization(values);
+        }
+
+        function applyState(values) {
+            if (values.RUN !== undefined) setRunState(values.RUN);
+            if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
+            /* S 帧补充目标、零位、配置和状态；不使用 I 帧覆盖这些车端值。 */
+            setAngleRuntime(values);
+            setTrackingRuntime(values);
+            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            setInputValue("kpInput", values.KP);
+            setInputValue("kiInput", values.KI);
+            setInputValue("kdInput", values.KD);
+            setInputValue("angleKpInput", values.ANGLE_KP);
+            setInputValue("angleKiInput", values.ANGLE_KI);
+            setInputValue("angleKdInput", values.ANGLE_KD);
+            setInputValue("angleTargetInput", values.ANGLE_TARGET);
+            setInputValue("angleMinimumPwmInput", values.ANGLE_MINIMUM_PWM);
+            setInputValue("angleMaximumPwmInput", values.ANGLE_MAXIMUM_PWM);
+            setInputValue("angleToleranceInput", values.ANGLE_TOLERANCE);
+            setInputValue("angleSettleTimeInput", values.ANGLE_SETTLE_TIME);
+            setInputValue("speedInput", values.SPEED);
+            if (values.SPEED !== undefined) setBaseSpeed(values.SPEED, true);
+            setInputValue("limitInput", values.LIMIT);
+            setInputValue("encoderKpInput", values.ENC_KP);
+            setInputValue("encoderKiInput", values.ENC_KI);
+            setInputValue("encoderFullScaleInput", values.ENC_FULL_SCALE);
+            setInputValue("encoderLimitInput", values.ENC_LIMIT);
+            for (let channel = 1; channel <= 8; channel += 1) {
+                setInputValue("weight" + channel, values["W" + channel]);
+            }
+            if (typeof markDeviceConfigurationSynchronized === "function") markDeviceConfigurationSynchronized();
+        }
+
+        function processLine(rawLine) {
+            const line = rawLine.trim();
+            if (!line) return;
+            appendLog("RX", line, "rx");
+
+            const firstSpace = line.indexOf(" ");
+            const prefix = (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase();
+            const payload = firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim();
+
+            if (prefix === "T" || prefix === "TEL") {
+                /* 固件周期帧中的角度短字段：AH 航向、AE 误差、AO 输出、AS 状态、AR 就绪。 */
+                const values = expandKeyAliases(parseKeyValues(payload), {
+                    R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
+                    EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
+                });
+                applyTelemetry(values);
+                publishPidChartValues("telemetry", values);
+                return;
+            }
+            if (prefix === "I" || prefix === "IMU") {
+                const values = expandKeyAliases(parseKeyValues(payload), {
+                    R: "ROLL", P: "PITCH", Y: "YAW"
+                });
+                applyImu(values);
+                publishPidChartValues("imu", values);
+                return;
+            }
+            if (prefix === "S" || prefix === "STATE") {
+                /* 状态帧同时携带可调配置和只读零位/状态，统一扩展为语义名称。 */
+                const values = expandKeyAliases(parseKeyValues(payload), {
+                    R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", EC: "ENCODER_CLOSED",
+                    AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE",
+                    EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
+                });
+                applyState(values);
+                publishPidChartValues("state", values);
+                /* 兼容仅返回 S/STATE、尚未升级显式 OK 回执的固件。 */
+                const pendingGet = pendingCommands.find(item => item.expectedName === "GET");
+                if (pendingGet) settleCommandTransaction(pendingGet, true, "已收到状态数据");
+                return;
+            }
+            if (prefix === "OK") {
+                const values = parseKeyValues(payload);
+                if (!settlePendingCommand(true, line, values.CMD ?? values.C)) {
+                    elements.response.className = "response ok";
+                    elements.response.textContent = line;
+                }
+                return;
+            }
+            if (prefix === "ERR") {
+                const values = parseKeyValues(payload);
+                if (!settlePendingCommand(false, line, values.CMD ?? values.M)) {
+                    elements.response.className = "response error";
+                    elements.response.textContent = line;
+                }
+            }
+        }
+
+        function consumeReceivedText(text) {
+            receiveBuffer += text;
+            if (receiveBuffer.length > MAX_RECEIVE_BUFFER) {
+                appendLog("ERR", "接收行超过缓冲区上限，已丢弃未结束数据", "err");
+                receiveBuffer = "";
+                return;
+            }
+
+            const lines = receiveBuffer.split(/\r\n|\n|\r/);
+            receiveBuffer = lines.pop() || "";
+            lines.forEach(processLine);
+        }
+

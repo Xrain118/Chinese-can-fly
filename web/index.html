@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>八路循迹蓝牙调试台</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand">
+                <div class="brand-mark">4</div>
+                <div>
+                    <h1>八路循迹蓝牙调试台</h1>
+                    <p>八路地址选择循迹 · CH1 左 → CH8 右 · 黑线为 1</p>
+                </div>
+            </div>
+            <div class="connection-controls">
+                <div id="connectionChip" class="status-chip" aria-live="polite">
+                    <span class="status-dot"></span><span id="connectionText">未连接</span>
+                </div>
+                <label for="baudRate" style="font-size:12px;color:#b8cad5">波特率</label>
+                <select id="baudRate" aria-label="串口波特率">
+                    <option value="9600" selected>9600</option>
+                    <option value="19200">19200</option>
+                    <option value="38400">38400</option>
+                    <option value="57600">57600</option>
+                    <option value="115200">115200</option>
+                </select>
+                <label class="auto-reconnect-option" for="autoReconnect">
+                    <input id="autoReconnect" type="checkbox" checked>
+                    <span>自动重连</span>
+                </label>
+                <button id="openPidChartButton" class="secondary" type="button" title="在独立页面中观察可选遥测曲线">PID 图表</button>
+                <button id="connectButton" type="button">选择串口并连接</button>
+                <button id="disconnectButton" class="secondary" type="button" disabled>断开</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div id="browserNotice" class="notice" role="alert"></div>
+
+        <nav class="console-tabs" aria-label="调试台页面切换" role="tablist">
+            <button id="motionTab" class="console-tab" type="button" role="tab" aria-selected="true" aria-controls="motionPage" data-page="motion">
+                <span class="console-tab-icon" aria-hidden="true">M</span><span>运动控制</span>
+            </button>
+            <button id="imuTab" class="console-tab" type="button" role="tab" aria-selected="false" aria-controls="imuPage" data-page="imu">
+                <span class="console-tab-icon" aria-hidden="true">3D</span><span>陀螺仪</span>
+            </button>
+            <button id="serialTab" class="console-tab" type="button" role="tab" aria-selected="false" aria-controls="serialPage" data-page="serial">
+                <span class="console-tab-icon" aria-hidden="true">RX</span><span>串口数据</span>
+            </button>
+        </nav>
+
+        <div id="motionPage" class="console-page" role="tabpanel" aria-labelledby="motionTab" data-console-page="motion">
+        <div class="motion-layout">
+            <section class="card motion-visual-card">
+                <div class="card-head">
+                    <div>
+                        <h2>小车俯视实时状态</h2>
+                        <div class="hint">探头位置为 −70 … +70 mm（20 mm 间距），左侧/右侧均为双电机并联</div>
+                    </div>
+                    <div id="runState" class="run-pill">STOP</div>
+                </div>
+                <div class="card-body motion-visual-body">
+                    <div class="car-scene">
+                        <div class="car-heading">车头 / 行进方向</div>
+                        <div class="car-plan" role="img" aria-label="小车俯视图：车头八路循迹模块，左右两侧双电机并联">
+                            <div class="car-chassis"></div>
+                            <div class="car-tracking-module">
+                                <div class="tracking-module-title"><strong>八路地址选择循迹模块</strong><span>CH1 左 → CH8 右 · 黑线为 1</span></div>
+                                <div id="sensorGrid" class="sensors" aria-label="八路循迹传感器">
+                                    <div class="sensor" data-channel="1"><span class="sensor-channel">CH1 −70</span><strong class="sensor-value">0</strong><span class="sensor-caption">−70 mm</span></div>
+                                    <div class="sensor" data-channel="2"><span class="sensor-channel">CH2 −50</span><strong class="sensor-value">0</strong><span class="sensor-caption">−50 mm</span></div>
+                                    <div class="sensor" data-channel="3"><span class="sensor-channel">CH3 −30</span><strong class="sensor-value">0</strong><span class="sensor-caption">−30 mm</span></div>
+                                    <div class="sensor" data-channel="4"><span class="sensor-channel">CH4 −10</span><strong class="sensor-value">0</strong><span class="sensor-caption">−10 mm</span></div>
+                                    <div class="sensor" data-channel="5"><span class="sensor-channel">CH5 +10</span><strong class="sensor-value">0</strong><span class="sensor-caption">+10 mm</span></div>
+                                    <div class="sensor" data-channel="6"><span class="sensor-channel">CH6 +30</span><strong class="sensor-value">0</strong><span class="sensor-caption">+30 mm</span></div>
+                                    <div class="sensor" data-channel="7"><span class="sensor-channel">CH7 +50</span><strong class="sensor-value">0</strong><span class="sensor-caption">+50 mm</span></div>
+                                    <div class="sensor" data-channel="8"><span class="sensor-channel">CH8 +70</span><strong class="sensor-value">0</strong><span class="sensor-caption">+70 mm</span></div>
+                                </div>
+                            </div>
+                            <div class="car-center-console">
+                                <h3>主控实时数据</h3>
+                                <div class="car-live-stats">
+                                    <div class="car-live-stat"><span>位置误差</span><strong id="errorValue">0</strong></div>
+                                    <div class="car-live-stat"><span>传感器位串</span><strong id="sensorBits">00000000</strong></div>
+                                    <div class="car-live-stat"><span>循迹状态 / 基础 PWM</span><strong id="trackingRuntimeState">中心 / 0</strong></div>
+                                    <div class="car-live-stat"><span>最后遥测</span><strong id="telemetryAge">--</strong></div>
+                                </div>
+                            </div>
+                            <div class="car-drive-unit left">
+                                <span class="car-wheel" aria-hidden="true"></span>
+                                <div class="drive-unit-title"><strong>左侧电机对（双并联）</strong><span>M1</span></div>
+                                <div class="drive-unit-values">
+                                    <div class="drive-unit-value"><span>PWM</span><strong id="pwmLeft">0</strong></div>
+                                    <div class="drive-unit-value"><span>目标 CPS</span><strong id="targetLeft">0</strong></div>
+                                    <div class="drive-unit-value"><span>实际 CPS</span><strong id="encoderLeft">0</strong></div>
+                                </div>
+                                <div class="signed-bar" aria-label="左电机 PWM"><span id="pwmLeftBar" class="signed-fill"></span></div>
+                            </div>
+                            <div class="car-drive-unit right">
+                                <span class="car-wheel" aria-hidden="true"></span>
+                                <div class="drive-unit-title"><strong>右侧电机对（双并联）</strong><span>M2</span></div>
+                                <div class="drive-unit-values">
+                                    <div class="drive-unit-value"><span>PWM</span><strong id="pwmRight">0</strong></div>
+                                    <div class="drive-unit-value"><span>目标 CPS</span><strong id="targetRight">0</strong></div>
+                                    <div class="drive-unit-value"><span>实际 CPS</span><strong id="encoderRight">0</strong></div>
+                                </div>
+                                <div class="signed-bar" aria-label="右电机 PWM"><span id="pwmRightBar" class="signed-fill"></span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card quick-control-card">
+                <div class="card-head">
+                    <div>
+                        <h2>运动控制台</h2>
+                        <div class="hint">按 1 → 4 设置；SPEED 是唯一的基础速度入口</div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="control-step">
+                        <div class="control-step-head">
+                            <div class="control-step-title"><span class="control-step-index">1</span><strong>选择运行模式</strong></div>
+                            <span id="driveModeText" class="control-step-state">循迹模式</span>
+                        </div>
+                        <div class="mode-switch">
+                        <div class="mode-switch-actions" role="group" aria-label="运行模式切换">
+                            <button id="trackingModeButton" class="secondary active" type="button" aria-pressed="true">循迹</button>
+                            <button id="straightModeButton" class="secondary" type="button" aria-pressed="false">直行</button>
+                            <button id="angleModeButton" class="secondary" type="button" aria-pressed="false">角度</button>
+                        </div>
+                        </div>
+                        <p id="modeDescription" class="control-step-copy">循迹模式：SPEED 决定中间速度，位置 PID 只在左右轮之间增加差速。</p>
+                    </div>
+
+                    <div class="control-step primary-source">
+                        <div class="control-step-head">
+                            <div class="control-step-title"><span class="control-step-index">2</span><strong>设置基础速度</strong></div>
+                            <span class="source-badge">唯一速度入口</span>
+                        </div>
+                        <div class="speed-command-row">
+                            <div class="field"><label for="speedInput">SPEED 基础指令（0～1000）</label><input id="speedInput" type="number" value="400" min="0" max="1000" step="1"></div>
+                            <button id="sendSpeedButton" type="button">应用速度</button>
+                        </div>
+                        <div class="speed-meter" aria-hidden="true"><span id="speedCommandFill"></span></div>
+                        <div class="speed-scale"><span>0</span><strong><span id="baseSpeedDisplay">400</span> / 1000</strong><span>1000</span></div>
+                        <p id="speedMeaning" class="control-step-copy">这是循迹和直行共用的基础指令；角度模式原地旋转时不使用 SPEED。</p>
+                    </div>
+
+                    <div class="control-step">
+                        <div class="control-step-head">
+                            <div class="control-step-title"><span class="control-step-index">3</span><strong>选择速度执行方式</strong></div>
+                            <div id="encoderLoopState" class="encoder-loop-pill">ENC OFF</div>
+                        </div>
+                        <div class="encoder-loop-actions">
+                            <button id="encoderOffButton" class="secondary active" type="button">直接 PWM</button>
+                            <button id="encoderOnButton" class="secondary" type="button">编码器闭环</button>
+                        </div>
+                        <p id="executionDescription" class="control-step-copy">ENC ON：目标 CPS 由 SPEED、模式和满量程 CPS 自动换算，速度 PI 只修正最终 PWM。</p>
+                    </div>
+
+                    <div class="control-step">
+                        <div class="control-step-head">
+                            <div class="control-step-title"><span class="control-step-index">4</span><strong>启动或停车</strong></div>
+                            <span class="control-step-state">确认前 3 项后启动</span>
+                        </div>
+                        <div class="primary-drive-actions">
+                            <button id="startButton" class="start" type="button">启动运行</button>
+                            <button id="stopButton" class="danger" type="button">立即停车</button>
+                        </div>
+                        <div class="secondary-drive-actions">
+                            <button id="getAllButton" class="secondary" type="button">刷新参数</button>
+                            <button id="resetButton" class="secondary" type="button">清除控制历史</button>
+                            <button id="defaultsButton" class="secondary" type="button">恢复默认参数</button>
+                        </div>
+                    </div>
+                    <div id="lastResponse" class="response" aria-live="polite">等待控制器响应…</div>
+                </div>
+            </section>
+        </div>
+
+        <section class="card config-card" aria-labelledby="configCardTitle">
+            <div class="card-head config-card-head">
+                <div>
+                    <h2 id="configCardTitle">小车参数与预设</h2>
+                    <div class="hint">主界面的输入值始终跟随小车回读；预设在独立弹窗中编辑，不会覆盖当前界面</div>
+                </div>
+                <span id="deviceConfigStatusBadge" class="config-status-badge" data-state="waiting">等待小车回读</span>
+            </div>
+            <div class="card-body config-launch-body">
+                <div class="config-storage-copy">
+                    <strong id="deviceConfigStatusText">连接小车后会自动发送 GET ALL</strong>
+                    <span id="presetSummaryText">尚未读取本机预设。你可以离线打开预设弹窗，设置全部参数并保存。</span>
+                </div>
+                <div class="config-actions config-launch-actions">
+                    <button id="refreshDeviceConfigButton" class="secondary" type="button" disabled>重新读取小车参数</button>
+                    <button id="captureCurrentPresetButton" class="secondary" type="button">用小车当前值新建预设</button>
+                    <button id="openPresetDialogButton" type="button">打开全部预设参数</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="card control-chain-card">
+            <div class="card-head">
+                <div><h2>当前速度控制链</h2><div class="hint">从左到右查看谁产生目标、谁负责修正、最终输出了什么</div></div>
+            </div>
+            <div class="card-body">
+                <div class="control-chain" aria-label="速度控制链">
+                    <div class="control-chain-node source"><span>① 基础速度来源</span><strong id="chainSpeedValue">SPEED 400 / 1000</strong><small>唯一由你直接设置的速度指令</small></div>
+                    <div class="control-chain-node"><span>② 模式分配</span><strong id="controlStrategy">循迹 PID 产生左右差速</strong><small>直行同速；循迹差速；角度模式原地反向轮速</small></div>
+                    <div class="control-chain-node"><span>③ 换算目标轮速</span><strong id="chainTargetValue">L 0 / R 0 CPS</strong><small>由 SPEED、模式和满量程 CPS 自动计算</small></div>
+                    <div class="control-chain-node"><span>④ 执行器</span><strong id="chainExecutionValue">直接 PWM</strong><small>默认直接输出 PWM；可选编码器 PI 修正</small></div>
+                    <div class="control-chain-node"><span>⑤ 实际结果</span><strong id="chainActualValue">CPS L 0 / R 0</strong><small id="chainPwmValue">PWM L 0 / R 0</small></div>
+                </div>
+            </div>
+        </section>
+
+        <div class="advanced-controls-heading">
+            <div><h2>高级修正参数</h2><p>下面参数不会直接设置基础速度，只影响转向差速、速度闭环或独立外设。</p></div>
+            <strong>日常试车优先使用上方 1 → 4 控制台</strong>
+        </div>
+
+        <div class="grid control-grid">
+            <section class="card">
+                <div class="card-head">
+                    <div><h2>循迹转向 PID</h2><div class="hint">只决定左右轮差速，不决定基础速度</div></div>
+                    <span id="trackingPidScope" class="scope-badge active">循迹模式生效</span>
+                </div>
+                <div class="card-body">
+                    <div class="context-note">直行模式会旁路这些转向修正；切回循迹时重新生效。基础速度始终由上方 SPEED 设置。</div>
+                    <div class="command-row">
+                        <div class="field"><label for="kpInput">Kp（0～2）</label><input id="kpInput" type="number" value="0.14" min="0" max="2" step="0.001"></div>
+                        <div class="field"><label for="kiInput">Ki（0～2）</label><input id="kiInput" type="number" value="0" min="0" max="2" step="0.001"></div>
+                        <div class="field"><label for="kdInput">Kd（0～1）</label><input id="kdInput" type="number" value="0.00025" min="0" max="1" step="0.00001"></div>
+                        <button id="sendPidButton" type="button">发送 PID</button>
+                    </div>
+                    <div class="command-row single-command" style="margin-top:13px">
+                        <div class="field"><label for="limitInput">左右差速修正上限 LIMIT（0～500）</label><input id="limitInput" type="number" value="280" min="0" max="500" step="1"></div>
+                        <button id="sendLimitButton" type="button">应用差速限幅</button>
+                    </div>
+                </div>
+            </section>
+
+            <!--
+                航向角控制参数全部来自车端 S 帧，并通过独立 ANGLE 命令下发。
+                这里不复用循迹 PID 输入，因为两套控制器的输入单位和输出语义不同。
+            -->
+            <section class="card">
+                <div class="card-head">
+                    <div><h2>航向角 PID</h2><div class="hint">以车端零位为基准，顺时针/向右为正方向</div></div>
+                    <span id="anglePidScope" class="scope-badge">角度模式生效</span>
+                </div>
+                <div class="card-body">
+                    <div class="context-note">角度模式原地旋转：0° 前、90° 右、180° 后、270° 左。当前：<strong id="angleRuntimeSummary">等待车端角度状态</strong></div>
+                    <div class="command-row single-command">
+                        <div class="field"><label for="angleTargetInput">目标方位角（0～360°）</label><input id="angleTargetInput" type="number" value="0" min="0" max="360" step="0.1"></div>
+                        <button id="sendAngleTargetButton" type="button">发送目标角</button>
+                    </div>
+                    <div class="command-row" style="margin-top:13px">
+                        <div class="field"><label for="angleKpInput">角度 Kp（0～20）</label><input id="angleKpInput" type="number" value="3" min="0" max="20" step="0.01"></div>
+                        <div class="field"><label for="angleKiInput">角度 Ki（0～10）</label><input id="angleKiInput" type="number" value="0" min="0" max="10" step="0.01"></div>
+                        <div class="field"><label for="angleKdInput">角速度 Kd（0～10）</label><input id="angleKdInput" type="number" value="0.8" min="0" max="10" step="0.01"></div>
+                        <button id="sendAnglePidButton" type="button">发送角度 PID</button>
+                    </div>
+                    <div class="command-row encoder-gain-row" style="margin-top:13px">
+                        <div class="field"><label for="angleMinimumPwmInput">最小转向 PWM（0～1000）</label><input id="angleMinimumPwmInput" type="number" value="100" min="0" max="1000" step="1"></div>
+                        <div class="field"><label for="angleMaximumPwmInput">最大转向 PWM（0～1000）</label><input id="angleMaximumPwmInput" type="number" value="350" min="0" max="1000" step="1"></div>
+                        <button id="sendAnglePwmButton" type="button">发送 PWM 限幅</button>
+                    </div>
+                    <div class="command-row encoder-gain-row" style="margin-top:13px">
+                        <div class="field"><label for="angleToleranceInput">到位容差（0.5～20°）</label><input id="angleToleranceInput" type="number" value="2" min="0.5" max="20" step="0.1"></div>
+                        <div class="field"><label for="angleSettleTimeInput">稳定时间（50～2000 ms）</label><input id="angleSettleTimeInput" type="number" value="250" min="50" max="2000" step="10"></div>
+                        <button id="sendAngleSettlingButton" type="button">发送到位条件</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card">
+                <div class="card-head">
+                    <div><h2>编码器速度 PI</h2><div class="hint">只把实际 CPS 拉向自动生成的目标 CPS</div></div>
+                    <span id="encoderParameterScope" class="scope-badge">ENC OFF 正在生效</span>
+                </div>
+                <div class="card-body">
+                    <div class="context-note">这里没有第二个基础速度。目标 CPS = 模式分配后的指令 × 满量程 CPS ÷ 1000；只有上方选择“编码器闭环”时 Kp/Ki 才参与输出。</div>
+                    <div class="encoder-loop-note">
+                        <strong>试运行建议</strong>
+                        先架空车轮，刷新并确认参数；校准“满量程 CPS”后再启用。若方向异常或振荡，立即旁路速度环。
+                    </div>
+                    <div class="command-row encoder-gain-row">
+                        <div class="field"><label for="encoderKpInput">速度 Kp（0～1）</label><input id="encoderKpInput" type="number" value="0.02" min="0" max="1" step="0.001"></div>
+                        <div class="field"><label for="encoderKiInput">速度 Ki（0～10）</label><input id="encoderKiInput" type="number" value="0" min="0" max="10" step="0.01"></div>
+                        <button id="sendEncoderPidButton" type="button">发送速度 PI</button>
+                    </div>
+                    <div class="command-row single-command" style="margin-top:13px">
+                        <div class="field"><label for="encoderFullScaleInput">满量程 CPS（PWM 1000 对应，100～50000）</label><input id="encoderFullScaleInput" type="number" value="5000" min="100" max="50000" step="1"></div>
+                        <button id="sendEncoderCpsButton" type="button">发送 CPS 标定</button>
+                    </div>
+                    <div class="command-row single-command" style="margin-top:13px">
+                        <div class="field"><label for="encoderLimitInput">速度环 PWM 修正限幅（0～1000）</label><input id="encoderLimitInput" type="number" value="100" min="0" max="1000" step="1"></div>
+                        <button id="sendEncoderLimitButton" type="button">发送修正限幅</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card weights-card">
+                <div class="card-head">
+                    <div><h2>八路循迹传感器权重</h2><div class="hint">对应 −70 … +70 mm（20 mm 间距），CH1 最左，CH8 最右</div></div>
+                    <div class="card-head-actions">
+                        <span id="trackingWeightsScope" class="scope-badge active">循迹模式生效</span>
+                        <button id="sendAllWeightsButton" class="small" type="button">一次发送 8 路</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="weight-grid">
+                        <div class="weight-item"><div class="weight-top"><label for="weight1">CH1</label><span>−70 mm</span></div><input id="weight1" type="number" value="-7000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="1">发送 CH1</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight2">CH2</label><span>−50 mm</span></div><input id="weight2" type="number" value="-5000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="2">发送 CH2</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight3">CH3</label><span>−30 mm</span></div><input id="weight3" type="number" value="-3000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="3">发送 CH3</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight4">CH4</label><span>−10 mm</span></div><input id="weight4" type="number" value="-1000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="4">发送 CH4</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight5">CH5</label><span>+10 mm</span></div><input id="weight5" type="number" value="1000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="5">发送 CH5</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight6">CH6</label><span>+30 mm</span></div><input id="weight6" type="number" value="3000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="6">发送 CH6</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight7">CH7</label><span>+50 mm</span></div><input id="weight7" type="number" value="5000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="7">发送 CH7</button></div>
+                        <div class="weight-item"><div class="weight-top"><label for="weight8">CH8</label><span>+70 mm</span></div><input id="weight8" type="number" value="7000" min="-10000" max="10000" step="1"><button class="secondary small send-weight" type="button" data-channel="8">发送 CH8</button></div>
+                    </div>
+                </div>
+            </section>
+        </div>
+        </div>
+
+        <div id="imuPage" class="console-page" role="tabpanel" aria-labelledby="imuTab" data-console-page="imu" hidden>
+        <section class="card imu-card">
+            <div class="card-head">
+                <div>
+                    <h2>IMU 实时姿态</h2>
+                    <div class="hint">串口仅接收 Roll、Pitch、Yaw；可拖动模型改变观察视角</div>
+                </div>
+                <div id="imuState" class="imu-state-pill">等待遥测</div>
+            </div>
+            <div class="card-body">
+                <div class="attitude-layout">
+                    <div id="attitudeStage" class="attitude-stage" role="img" aria-label="等待姿态传感器数据；可用鼠标或触摸拖动改变观察视角">
+                        <div class="attitude-live-badge" aria-live="polite">
+                            <span class="attitude-live-dot"></span>
+                            <span id="attitudeStatusText">等待姿态数据</span>
+                        </div>
+                        <div class="attitude-world" aria-hidden="true">
+                            <div id="attitudeCamera" class="attitude-camera">
+                                <div id="attitudeModel" class="attitude-model">
+                                    <div class="sensor-board-shadow"></div>
+                                    <div class="sensor-board-header left"></div>
+                                    <div class="sensor-board-shell">
+                                        <div class="sensor-board-face sensor-board-bottom"></div>
+                                        <div class="sensor-board-face sensor-board-front"></div>
+                                        <div class="sensor-board-face sensor-board-rear"></div>
+                                        <div class="sensor-board-face sensor-board-left"></div>
+                                        <div class="sensor-board-face sensor-board-right"></div>
+                                        <div class="sensor-board-face sensor-board-top">
+                                            <span class="sensor-board-hole left"></span>
+                                            <span class="sensor-board-hole right"></span>
+                                            <span class="sensor-board-name">IMU 模组</span>
+                                            <div class="sensor-board-chip">IMU</div>
+                                            <div class="sensor-board-crystal"></div>
+                                            <div class="sensor-board-pins left"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                                            <div class="sensor-board-pins right"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                                            <div class="sensor-board-pin-label left"><span>VCC</span><span>GND</span><span>SCL</span><span>SDA</span><span>ADO</span><span>CS</span><span>INT</span><span>RST</span></div>
+                                            <div class="sensor-board-pin-label right"><span>BOOT</span><span>PS1</span><span>PS0</span></div>
+                                            <div class="sensor-board-components"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                                        </div>
+                                    </div>
+                                    <div class="model-axes">
+                                        <span class="model-axis model-axis-x"></span>
+                                        <span class="model-axis model-axis-y"></span>
+                                        <span class="model-axis model-axis-z"></span>
+                                        <span class="model-axis-origin"></span>
+                                        <span class="model-axis-label-anchor model-axis-anchor-x"><span class="model-axis-label model-axis-label-x">X</span></span>
+                                        <span class="model-axis-label-anchor model-axis-anchor-y"><span class="model-axis-label model-axis-label-y">Y</span></span>
+                                        <span class="model-axis-label-anchor model-axis-anchor-z"><span class="model-axis-label model-axis-label-z">Z</span></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="attitude-axis-legend" aria-hidden="true">
+                            <span class="axis-x">X 红</span>
+                            <span class="axis-y">Y 蓝</span>
+                            <span class="axis-z">Z 黄</span>
+                        </div>
+                        <div class="attitude-drag-hint" aria-hidden="true">拖动旋转视角</div>
+                    </div>
+
+                    <div class="imu-group attitude-readout">
+                        <div class="imu-group-title"><strong>实时姿态</strong><span>degree</span></div>
+                        <div class="attitude-angle-grid">
+                            <div class="attitude-angle"><span>Roll 横滚</span><strong><span id="imuRoll">--</span><small>°</small></strong></div>
+                            <div class="attitude-angle"><span>Pitch 俯仰</span><strong><span id="imuPitch">--</span><small>°</small></strong></div>
+                            <div class="attitude-angle"><span>Yaw 偏航</span><strong><span id="imuYaw">--</span><small>°</small></strong></div>
+                        </div>
+                        <div class="attitude-meta">
+                            <div class="imu-diagnostic"><span>模型参考</span><strong id="attitudeReference">绝对姿态</strong></div>
+                            <div class="imu-diagnostic"><span>刷新频率</span><strong id="attitudeRate">--</strong></div>
+                        </div>
+                        <div class="attitude-actions">
+                            <button id="topViewButton" class="secondary small" type="button" aria-pressed="false">固定俯视</button>
+                            <button id="zeroAttitudeButton" class="secondary small" type="button" aria-pressed="false" disabled>以当前姿态归零</button>
+                            <span class="hint">只调整网页模型零位，不修改姿态数据或车端参数。</span>
+                        </div>
+                    </div>
+                </div>
+
+                    <!--
+                        俯视方位图使用 MCU 返回的 AH/AE/AO/AS，不在浏览器中自行计算控制角。
+                        原始 I 帧 Yaw 只保留在“当前原始 Yaw”读数中，便于核对传感器方向。
+                    -->
+                    <div class="vehicle-yaw-panel">
+                    <div id="vehicleYawStage" class="vehicle-yaw-stage" role="img" aria-label="等待第一帧有效 Yaw 数据以建立小车初始方向">
+                        <div class="vehicle-yaw-title">
+                            <strong>小车俯视偏航</strong>
+                            <span>固定俯视 · 仅显示相对 Yaw 方向</span>
+                        </div>
+                        <div id="vehicleYawState" class="vehicle-yaw-state">等待车端零位</div>
+                        <div class="vehicle-yaw-compass" aria-hidden="true">
+                            <span class="vehicle-yaw-direction north">N</span>
+                            <span class="vehicle-yaw-direction east">E</span>
+                            <span class="vehicle-yaw-direction south">S</span>
+                            <span class="vehicle-yaw-direction west">W</span>
+                            <div id="vehicleYawCar" class="vehicle-yaw-car-rotor">
+                                <div class="vehicle-yaw-heading-line"></div>
+                                <div class="vehicle-yaw-car">
+                                    <span class="vehicle-yaw-wheel front-left"></span>
+                                    <span class="vehicle-yaw-wheel front-right"></span>
+                                    <span class="vehicle-yaw-wheel rear-left"></span>
+                                    <span class="vehicle-yaw-wheel rear-right"></span>
+                                    <span class="vehicle-yaw-car-sensor">IMU</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="imu-group vehicle-yaw-readout">
+                        <div class="imu-group-title"><strong>小车相对初始方向</strong><span>degree</span></div>
+                        <div class="vehicle-yaw-value-box">
+                            <span>相对方位角（0～360°）</span>
+                            <strong><span id="vehicleYawValue">--</span><small>°</small></strong>
+                        </div>
+                        <div class="vehicle-yaw-meta">
+                            <div class="imu-diagnostic"><span>车端零位 Yaw</span><strong id="vehicleYawInitial">--</strong></div>
+                            <div class="imu-diagnostic"><span>当前原始 Yaw</span><strong id="vehicleYawCurrent">--</strong></div>
+                            <div class="imu-diagnostic"><span>目标角</span><strong id="vehicleYawTarget">--</strong></div>
+                            <div class="imu-diagnostic"><span>控制误差</span><strong id="vehicleYawError">--</strong></div>
+                            <div class="imu-diagnostic"><span>转向输出</span><strong id="vehicleYawOutput">--</strong></div>
+                            <div class="imu-diagnostic"><span>控制状态</span><strong id="vehicleYawControlState">--</strong></div>
+                        </div>
+                        <div class="vehicle-yaw-actions">
+                            <button id="resetVehicleYawButton" class="secondary small" type="button" disabled>以当前车头重新归零</button>
+                            <span class="hint">车端上电首帧自动归零；点击后网页依次发送 STOP、ANGLE ZERO、GET ALL。</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+        </div>
+
+        <div id="serialPage" class="console-page" role="tabpanel" aria-labelledby="serialTab" data-console-page="serial" hidden>
+        <section class="card log-card">
+            <div class="card-head">
+                <div><h2>串口原始数据</h2><div class="hint">每行带本机时间戳；最多保留最近 300 行</div></div>
+                <div class="log-toolbar"><span id="logCount" class="log-count">0 行</span><button id="clearLogButton" class="secondary small" type="button">清空日志</button></div>
+            </div>
+            <div id="terminal" class="terminal" aria-live="polite" aria-label="串口收发日志"></div>
+            <div class="card-body">
+                <div class="command-row single-command">
+                    <div class="field"><label for="manualCommand">手工命令（例如 HELP、GET ALL、MODE STRAIGHT、ENC ON）</label><input id="manualCommand" type="text" autocomplete="off" placeholder="输入命令，按 Enter 发送"></div>
+                    <button id="sendManualButton" type="button">发送命令</button>
+                </div>
+                <div class="actions">
+                    <button class="secondary small quick-command" type="button" data-command="HELP">HELP</button>
+                    <button class="secondary small quick-command" type="button" data-command="GET ALL">GET ALL</button>
+                </div>
+            </div>
+        </section>
+        </div>
+
+        <div class="footer-note">建议使用 Chrome 或 Edge 打开本文件。HC-04 首次选择并授权对应 COM 口后，保持“自动重连”开启，小车重新上电即可自动恢复连接。</div>
+    </main>
+
+    <div id="presetDialogBackdrop" class="preset-dialog-backdrop" hidden>
+        <section id="presetDialog" class="preset-dialog" role="dialog" aria-modal="true" aria-labelledby="presetDialogTitle" tabindex="-1">
+            <header class="preset-dialog-header">
+                <div>
+                    <h2 id="presetDialogTitle">全部预设参数</h2>
+                    <p>这里的值是独立预设，不会在关闭弹窗时覆盖主界面。运行/停车状态不保存。</p>
+                </div>
+                <button id="closePresetDialogButton" class="secondary preset-close-button" type="button" aria-label="关闭预设对话框">关闭</button>
+            </header>
+
+            <div class="preset-dialog-body">
+                <div class="preset-dialog-status">
+                    <span id="presetStatusBadge" class="config-status-badge" data-state="saved">本机已保存</span>
+                    <div><strong id="presetStatusText">正在读取本机预设</strong><span id="presetStatusDetail">请稍候…</span></div>
+                </div>
+
+                <div class="preset-section-grid">
+                    <fieldset class="preset-form-section preset-section-wide">
+                        <legend>基本设置</legend>
+                        <div class="preset-fields four-columns">
+                            <div class="field preset-name-field"><label for="presetNameInput">预设名称</label><input id="presetNameInput" type="text" value="默认调试配置" maxlength="80" autocomplete="off"></div>
+                            <div class="field"><label for="presetBaudRateSelect">串口波特率</label><select id="presetBaudRateSelect"><option value="9600" selected>9600</option><option value="19200">19200</option><option value="38400">38400</option><option value="57600">57600</option><option value="115200">115200</option></select></div>
+                            <div class="field"><label for="presetAutoReconnectSelect">自动重连</label><select id="presetAutoReconnectSelect"><option value="on" selected>开启</option><option value="off">关闭</option></select></div>
+                            <div class="field"><label for="presetDriveModeSelect">运行模式</label><select id="presetDriveModeSelect"><option value="track" selected>循迹模式</option><option value="straight">直行模式</option><option value="angle">角度模式</option></select></div>
+                            <div class="field"><label for="presetSpeedInput">基础速度 SPEED（0～1000）</label><input id="presetSpeedInput" type="number" value="400" min="0" max="1000" step="1"></div>
+                        </div>
+                    </fieldset>
+
+                    <!-- v2 预设保存目标和配置参数，但故意不保存本次上电的运行时零位 AZ。 -->
+                    <fieldset class="preset-form-section preset-section-wide">
+                        <legend>航向角 PID 与目标</legend>
+                        <div class="preset-fields four-columns">
+                            <div class="field"><label for="presetAngleTargetInput">目标角（0～360°）</label><input id="presetAngleTargetInput" type="number" value="0" min="0" max="360" step="0.1"></div>
+                            <div class="field"><label for="presetAngleKpInput">Kp（0～20）</label><input id="presetAngleKpInput" type="number" value="3" min="0" max="20" step="0.01"></div>
+                            <div class="field"><label for="presetAngleKiInput">Ki（0～10）</label><input id="presetAngleKiInput" type="number" value="0" min="0" max="10" step="0.01"></div>
+                            <div class="field"><label for="presetAngleKdInput">Kd（0～10）</label><input id="presetAngleKdInput" type="number" value="0.8" min="0" max="10" step="0.01"></div>
+                            <div class="field"><label for="presetAngleMinimumPwmInput">最小 PWM（0～1000）</label><input id="presetAngleMinimumPwmInput" type="number" value="100" min="0" max="1000" step="1"></div>
+                            <div class="field"><label for="presetAngleMaximumPwmInput">最大 PWM（0～1000）</label><input id="presetAngleMaximumPwmInput" type="number" value="350" min="0" max="1000" step="1"></div>
+                            <div class="field"><label for="presetAngleToleranceInput">到位容差（0.5～20°）</label><input id="presetAngleToleranceInput" type="number" value="2" min="0.5" max="20" step="0.1"></div>
+                            <div class="field"><label for="presetAngleSettleTimeInput">稳定时间（50～2000 ms）</label><input id="presetAngleSettleTimeInput" type="number" value="250" min="50" max="2000" step="10"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="preset-form-section">
+                        <legend>循迹 PID 与差速限幅</legend>
+                        <div class="preset-fields two-columns">
+                            <div class="field"><label for="presetKpInput">Kp（0～2）</label><input id="presetKpInput" type="number" value="0.14" min="0" max="2" step="0.001"></div>
+                            <div class="field"><label for="presetKiInput">Ki（0～2）</label><input id="presetKiInput" type="number" value="0" min="0" max="2" step="0.001"></div>
+                            <div class="field"><label for="presetKdInput">Kd（0～1）</label><input id="presetKdInput" type="number" value="0.00025" min="0" max="1" step="0.00001"></div>
+                            <div class="field"><label for="presetLimitInput">LIMIT（0～500）</label><input id="presetLimitInput" type="number" value="280" min="0" max="500" step="1"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="preset-form-section">
+                        <legend>编码器速度闭环</legend>
+                        <div class="preset-fields two-columns">
+                            <div class="field"><label for="presetEncoderEnabledSelect">编码器闭环</label><select id="presetEncoderEnabledSelect"><option value="on">开启</option><option value="off" selected>关闭（H 题外环基线）</option></select></div>
+                            <div class="field"><label for="presetEncoderKpInput">速度 Kp（0～1）</label><input id="presetEncoderKpInput" type="number" value="0.02" min="0" max="1" step="0.001"></div>
+                            <div class="field"><label for="presetEncoderKiInput">速度 Ki（0～10）</label><input id="presetEncoderKiInput" type="number" value="0" min="0" max="10" step="0.01"></div>
+                            <div class="field"><label for="presetEncoderFullScaleInput">满量程 CPS（100～50000）</label><input id="presetEncoderFullScaleInput" type="number" value="5000" min="100" max="50000" step="1"></div>
+                            <div class="field"><label for="presetEncoderLimitInput">PWM 修正限幅（0～1000）</label><input id="presetEncoderLimitInput" type="number" value="100" min="0" max="1000" step="1"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="preset-form-section preset-section-wide">
+                        <legend>八路循迹权重（CH1 到 CH8 必须严格递增）</legend>
+                        <div class="preset-weight-grid">
+                            <div class="field"><label for="presetWeight1">CH1 −70 mm</label><input id="presetWeight1" type="number" value="-7000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight2">CH2 −50 mm</label><input id="presetWeight2" type="number" value="-5000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight3">CH3 −30 mm</label><input id="presetWeight3" type="number" value="-3000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight4">CH4 −10 mm</label><input id="presetWeight4" type="number" value="-1000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight5">CH5 +10 mm</label><input id="presetWeight5" type="number" value="1000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight6">CH6 +30 mm</label><input id="presetWeight6" type="number" value="3000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight7">CH7 +50 mm</label><input id="presetWeight7" type="number" value="5000" min="-10000" max="10000" step="1"></div>
+                            <div class="field"><label for="presetWeight8">CH8 +70 mm</label><input id="presetWeight8" type="number" value="7000" min="-10000" max="10000" step="1"></div>
+                        </div>
+                    </fieldset>
+
+                </div>
+            </div>
+
+            <footer class="preset-dialog-footer">
+                <div class="preset-file-actions">
+                    <button id="loadCurrentIntoPresetButton" class="secondary" type="button">从小车当前值载入</button>
+                    <button id="savePresetButton" class="secondary" type="button">保存到本机</button>
+                    <button id="exportPresetButton" class="secondary" type="button">导出 JSON</button>
+                    <button id="importPresetButton" class="secondary" type="button">导入 JSON</button>
+                    <input id="presetFileInput" class="visually-hidden" type="file" accept="application/json,.json">
+                </div>
+                <div id="presetApplyProgress" class="config-progress" hidden aria-live="polite">
+                    <div class="config-progress-track"><span id="presetApplyProgressFill"></span></div>
+                    <span id="presetApplyProgressText">等待下发</span>
+                </div>
+                <button id="applyPresetButton" type="button">保存并安全下发到小车</button>
+            </footer>
+        </section>
+    </div>
+
+    <div id="commandToastStack" class="command-toast-stack" aria-live="polite" aria-label="小车指令状态"></div>
+
+    <script src="js/state.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/telemetry.js"></script>
+    <script src="js/serial.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/controls.js"></script>
+    <script src="js/bootstrap.js"></script>
+</body>
+</html>
