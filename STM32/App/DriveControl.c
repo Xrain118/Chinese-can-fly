@@ -19,9 +19,12 @@ typedef struct
 	float trackingKd;
 	float encoderKp;
 	float encoderKi;
+	float encoderSyncKp;
 	int16_t trackingLimit;
 	int16_t encoderLimit;
+	int16_t encoderSyncLimit;
 	int32_t encoderFullScaleCps;
+	int32_t encoderSyncToleranceCps;
 	int32_t previousLeftFrontCount;
 	int32_t previousLeftRearCount;
 	int32_t previousRightFrontCount;
@@ -164,8 +167,10 @@ static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
 	int32_t lr = Encoder_GetLeftRearCount();
 	int32_t rf = Encoder_GetRightFrontCount();
 	int32_t rr = Encoder_GetRightRearCount();
-	int32_t leftDelta;
-	int32_t rightDelta;
+	int32_t leftFrontDelta;
+	int32_t leftRearDelta;
+	int32_t rightFrontDelta;
+	int32_t rightRearDelta;
 
 	if ((g_drive.encoderSynchronized == 0U) || (elapsedMs == 0U))
 	{
@@ -174,47 +179,110 @@ static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
 		g_drive.previousRightFrontCount = rf;
 		g_drive.previousRightRearCount = rr;
 		g_drive.encoderSynchronized = 1U;
+		g_drive.snapshot.leftFrontCps = 0;
+		g_drive.snapshot.leftRearCps = 0;
+		g_drive.snapshot.rightFrontCps = 0;
+		g_drive.snapshot.rightRearCps = 0;
 		g_drive.snapshot.leftMeasuredCps = 0;
 		g_drive.snapshot.rightMeasuredCps = 0;
 		return;
 	}
 
-	leftDelta = ((lf - g_drive.previousLeftFrontCount) +
-				 (lr - g_drive.previousLeftRearCount)) / 2;
-	rightDelta = ((rf - g_drive.previousRightFrontCount) +
-				  (rr - g_drive.previousRightRearCount)) / 2;
+	leftFrontDelta = lf - g_drive.previousLeftFrontCount;
+	leftRearDelta = lr - g_drive.previousLeftRearCount;
+	rightFrontDelta = rf - g_drive.previousRightFrontCount;
+	rightRearDelta = rr - g_drive.previousRightRearCount;
 
 	g_drive.previousLeftFrontCount = lf;
 	g_drive.previousLeftRearCount = lr;
 	g_drive.previousRightFrontCount = rf;
 	g_drive.previousRightRearCount = rr;
 
-	g_drive.snapshot.leftMeasuredCps =
-		(int32_t)(((int64_t)leftDelta * 1000LL) / elapsedMs);
-	g_drive.snapshot.rightMeasuredCps =
-		(int32_t)(((int64_t)rightDelta * 1000LL) / elapsedMs);
+	g_drive.snapshot.leftFrontCps =
+		(int32_t)(((int64_t)leftFrontDelta * 1000LL) / elapsedMs);
+	g_drive.snapshot.leftRearCps =
+		(int32_t)(((int64_t)leftRearDelta * 1000LL) / elapsedMs);
+	g_drive.snapshot.rightFrontCps =
+		(int32_t)(((int64_t)rightFrontDelta * 1000LL) / elapsedMs);
+	g_drive.snapshot.rightRearCps =
+		(int32_t)(((int64_t)rightRearDelta * 1000LL) / elapsedMs);
+	g_drive.snapshot.leftMeasuredCps = (int32_t)(
+		((int64_t)g_drive.snapshot.leftFrontCps + g_drive.snapshot.leftRearCps) / 2LL);
+	g_drive.snapshot.rightMeasuredCps = (int32_t)(
+		((int64_t)g_drive.snapshot.rightFrontCps + g_drive.snapshot.rightRearCps) / 2LL);
 }
 
-static int16_t DriveControl_UpdateSpeedSide(SimplePID *pid,
-											int16_t desiredPwm,
-											int32_t targetCps,
-											int32_t measuredCps,
-											float dtSeconds)
+static int16_t DriveControl_UpdateSpeedCorrection(SimplePID *pid,
+												  int16_t desiredPwm,
+												  int32_t targetCps,
+												  int32_t measuredCps,
+												  float dtSeconds)
 {
-	float correction;
-
 	if (desiredPwm == 0)
 	{
 		SimplePID_Reset(pid);
 		return 0;
 	}
 
-	correction = SimplePID_Update(pid, (float)(targetCps - measuredCps), dtSeconds);
-	return DriveControl_ClampPwm((int32_t)desiredPwm + DriveControl_RoundFloat(correction));
+	return DriveControl_RoundFloat(
+		SimplePID_Update(pid, (float)(targetCps - measuredCps), dtSeconds));
+}
+
+static int16_t DriveControl_UpdateEncoderSync(void)
+{
+	int32_t effectiveError;
+	float correction;
+
+	g_drive.snapshot.encoderSyncError =
+		(g_drive.snapshot.leftTargetCps - g_drive.snapshot.rightTargetCps) -
+		(g_drive.snapshot.leftMeasuredCps - g_drive.snapshot.rightMeasuredCps);
+	g_drive.snapshot.encoderSyncActive = 0U;
+	g_drive.snapshot.encoderSyncCorrection = 0;
+
+	if ((g_drive.snapshot.encoderSyncEnabled == 0U) ||
+		(g_drive.encoderSyncKp <= 0.0f) || (g_drive.encoderSyncLimit <= 0) ||
+		(g_drive.snapshot.leftTargetCps == 0) ||
+		(g_drive.snapshot.rightTargetCps == 0) ||
+		(((g_drive.snapshot.leftTargetCps > 0) !=
+		  (g_drive.snapshot.rightTargetCps > 0))))
+	{
+		return 0;
+	}
+
+	g_drive.snapshot.encoderSyncActive = 1U;
+	effectiveError = g_drive.snapshot.encoderSyncError;
+	if (effectiveError > g_drive.encoderSyncToleranceCps)
+	{
+		effectiveError -= g_drive.encoderSyncToleranceCps;
+	}
+	else if (effectiveError < -g_drive.encoderSyncToleranceCps)
+	{
+		effectiveError += g_drive.encoderSyncToleranceCps;
+	}
+	else
+	{
+		effectiveError = 0;
+	}
+
+	correction = g_drive.encoderSyncKp * (float)effectiveError;
+	if (correction > (float)g_drive.encoderSyncLimit)
+	{
+		correction = (float)g_drive.encoderSyncLimit;
+	}
+	else if (correction < -(float)g_drive.encoderSyncLimit)
+	{
+		correction = -(float)g_drive.encoderSyncLimit;
+	}
+	g_drive.snapshot.encoderSyncCorrection = DriveControl_RoundFloat(correction);
+	return g_drive.snapshot.encoderSyncCorrection;
 }
 
 static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 {
+	int16_t leftCorrection;
+	int16_t rightCorrection;
+	int16_t syncCorrection;
+
 	g_drive.snapshot.leftTargetCps =
 		DriveControl_CommandToCps(g_drive.snapshot.desiredLeftPwm);
 	g_drive.snapshot.rightTargetCps =
@@ -224,23 +292,34 @@ static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 
 	if (g_drive.snapshot.encoderClosed == 0U)
 	{
+		g_drive.snapshot.encoderSyncError =
+			(g_drive.snapshot.leftTargetCps - g_drive.snapshot.rightTargetCps) -
+			(g_drive.snapshot.leftMeasuredCps - g_drive.snapshot.rightMeasuredCps);
+		g_drive.snapshot.encoderSyncActive = 0U;
+		g_drive.snapshot.encoderSyncCorrection = 0;
 		g_drive.snapshot.appliedLeftPwm = g_drive.snapshot.desiredLeftPwm;
 		g_drive.snapshot.appliedRightPwm = g_drive.snapshot.desiredRightPwm;
 		return;
 	}
 
-	g_drive.snapshot.appliedLeftPwm = DriveControl_UpdateSpeedSide(
+	leftCorrection = DriveControl_UpdateSpeedCorrection(
 		&g_drive.leftSpeedPid,
 		g_drive.snapshot.desiredLeftPwm,
 		g_drive.snapshot.leftTargetCps,
 		g_drive.snapshot.leftMeasuredCps,
 		dtSeconds);
-	g_drive.snapshot.appliedRightPwm = DriveControl_UpdateSpeedSide(
+	rightCorrection = DriveControl_UpdateSpeedCorrection(
 		&g_drive.rightSpeedPid,
 		g_drive.snapshot.desiredRightPwm,
 		g_drive.snapshot.rightTargetCps,
 		g_drive.snapshot.rightMeasuredCps,
 		dtSeconds);
+	syncCorrection = DriveControl_UpdateEncoderSync();
+
+	g_drive.snapshot.appliedLeftPwm = DriveControl_ClampPwm(
+		(int32_t)g_drive.snapshot.desiredLeftPwm + leftCorrection + syncCorrection);
+	g_drive.snapshot.appliedRightPwm = DriveControl_ClampPwm(
+		(int32_t)g_drive.snapshot.desiredRightPwm + rightCorrection - syncCorrection);
 }
 
 void DriveControl_LoadDefaults(void)
@@ -253,6 +332,7 @@ void DriveControl_LoadDefaults(void)
 	g_drive.snapshot.running = 0U;
 	g_drive.snapshot.mode = DRIVE_MODE_TRACK;
 	g_drive.snapshot.encoderClosed = 0U;
+	g_drive.snapshot.encoderSyncEnabled = 0U;
 	g_drive.snapshot.speed = 400;
 	g_drive.trackingKp = 0.140000f;
 	g_drive.trackingKi = 0.000000f;
@@ -262,6 +342,9 @@ void DriveControl_LoadDefaults(void)
 	g_drive.encoderKi = 0.000000f;
 	g_drive.encoderLimit = 100;
 	g_drive.encoderFullScaleCps = 5000;
+	g_drive.encoderSyncKp = 0.010000f;
+	g_drive.encoderSyncToleranceCps = 50;
+	g_drive.encoderSyncLimit = 50;
 
 	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
 	{
@@ -302,8 +385,15 @@ void DriveControl_Reset(void)
 	g_drive.snapshot.appliedRightPwm = 0;
 	g_drive.snapshot.leftTargetCps = 0;
 	g_drive.snapshot.rightTargetCps = 0;
+	g_drive.snapshot.leftFrontCps = 0;
+	g_drive.snapshot.leftRearCps = 0;
+	g_drive.snapshot.rightFrontCps = 0;
+	g_drive.snapshot.rightRearCps = 0;
 	g_drive.snapshot.leftMeasuredCps = 0;
 	g_drive.snapshot.rightMeasuredCps = 0;
+	g_drive.snapshot.encoderSyncError = 0;
+	g_drive.snapshot.encoderSyncCorrection = 0;
+	g_drive.snapshot.encoderSyncActive = 0U;
 	g_drive.snapshot.trackingState = 0U;
 	DriveControl_WriteMotors(0, 0);
 }
@@ -407,6 +497,8 @@ void DriveControl_SetEncoderClosed(uint8_t enabled)
 	SimplePID_Reset(&g_drive.leftSpeedPid);
 	SimplePID_Reset(&g_drive.rightSpeedPid);
 	g_drive.encoderSynchronized = 0U;
+	g_drive.snapshot.encoderSyncActive = 0U;
+	g_drive.snapshot.encoderSyncCorrection = 0;
 }
 
 uint8_t DriveControl_SetEncoderGains(float kp, float ki)
@@ -441,6 +533,29 @@ uint8_t DriveControl_SetEncoderLimit(int16_t limit)
 	g_drive.encoderLimit = limit;
 	SimplePID_SetOutputLimit(&g_drive.leftSpeedPid, (float)limit);
 	SimplePID_SetOutputLimit(&g_drive.rightSpeedPid, (float)limit);
+	return 1U;
+}
+
+void DriveControl_SetEncoderSyncEnabled(uint8_t enabled)
+{
+	g_drive.snapshot.encoderSyncEnabled = (enabled != 0U) ? 1U : 0U;
+	g_drive.snapshot.encoderSyncActive = 0U;
+	g_drive.snapshot.encoderSyncCorrection = 0;
+}
+
+uint8_t DriveControl_SetEncoderSync(float kp, int32_t toleranceCps, int16_t limit)
+{
+	if ((kp < 0.0f) || (kp > 1.0f) ||
+		(toleranceCps < 0) || (toleranceCps > 50000) ||
+		(limit < 0) || (limit > DRIVE_CONTROL_PWM_MAX))
+	{
+		return 0U;
+	}
+	g_drive.encoderSyncKp = kp;
+	g_drive.encoderSyncToleranceCps = toleranceCps;
+	g_drive.encoderSyncLimit = limit;
+	g_drive.snapshot.encoderSyncActive = 0U;
+	g_drive.snapshot.encoderSyncCorrection = 0;
 	return 1U;
 }
 
@@ -515,3 +630,7 @@ float DriveControl_GetEncoderKp(void) { return g_drive.encoderKp; }
 float DriveControl_GetEncoderKi(void) { return g_drive.encoderKi; }
 int32_t DriveControl_GetEncoderFullScaleCps(void) { return g_drive.encoderFullScaleCps; }
 int16_t DriveControl_GetEncoderLimit(void) { return g_drive.encoderLimit; }
+uint8_t DriveControl_GetEncoderSyncEnabled(void) { return g_drive.snapshot.encoderSyncEnabled; }
+float DriveControl_GetEncoderSyncKp(void) { return g_drive.encoderSyncKp; }
+int32_t DriveControl_GetEncoderSyncToleranceCps(void) { return g_drive.encoderSyncToleranceCps; }
+int16_t DriveControl_GetEncoderSyncLimit(void) { return g_drive.encoderSyncLimit; }

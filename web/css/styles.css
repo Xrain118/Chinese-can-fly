@@ -394,10 +394,40 @@
             font: 800 14px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
             text-overflow: ellipsis;
         }
+        .wheel-telemetry {
+            position: absolute;
+            z-index: 6;
+            top: 158px;
+            width: 23%;
+            min-height: 58px;
+            padding: 8px 10px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-areas: "label unit" "value unit";
+            align-items: center;
+            gap: 3px 7px;
+            border: 1px solid #bed6dd;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 7px 16px rgba(30, 55, 78, 0.12);
+        }
+        .wheel-telemetry.left-front, .wheel-telemetry.left-rear { left: 1%; }
+        .wheel-telemetry.right-front, .wheel-telemetry.right-rear { right: 1%; text-align: right; }
+        .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 306px; }
+        .wheel-telemetry span { grid-area: label; color: var(--muted); font-size: 9px; font-weight: 800; }
+        .wheel-telemetry strong {
+            grid-area: value;
+            min-width: 0;
+            overflow: hidden;
+            color: #153d46;
+            font: 800 18px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+            text-overflow: ellipsis;
+        }
+        .wheel-telemetry small { grid-area: unit; color: #0f766e; font-size: 9px; font-weight: 800; }
         .car-drive-unit {
             position: absolute;
             z-index: 5;
-            bottom: 44px;
+            bottom: 20px;
             width: 38.5%;
             min-height: 134px;
             padding: 12px 15px;
@@ -1353,6 +1383,30 @@
         .single-command { grid-template-columns: minmax(0, 1fr) auto; }
         .servo-command-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
         .encoder-gain-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+        .sync-loop-actions { margin-bottom: 13px; }
+        .sync-gain-row { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
+        .sync-runtime-grid {
+            margin-top: 14px;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .sync-runtime-grid > div {
+            min-width: 0;
+            padding: 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #f7fafc;
+        }
+        .sync-runtime-grid span, .sync-runtime-grid small { display: block; color: var(--muted); font-size: 9px; }
+        .sync-runtime-grid strong {
+            display: block;
+            margin: 5px 0 3px;
+            overflow: hidden;
+            color: var(--teal-dark);
+            font: 800 18px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+            text-overflow: ellipsis;
+        }
         .encoder-loop-note {
             margin: 13px 0;
             padding: 11px 12px;
@@ -1585,11 +1639,12 @@
             .control-chain-node::after { display: none; }
             .control-chain-node:last-child { grid-column: 1 / -1; }
             .weight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .car-scene { min-height: 535px; }
-            .car-plan { width: calc(100% - 12px); min-height: 515px; }
+            .car-scene { min-height: 580px; }
+            .car-plan { width: calc(100% - 12px); min-height: 560px; }
             .car-chassis { left: 10%; right: 10%; }
             .car-center-console { left: 20%; right: 20%; }
             .car-drive-unit { width: 43%; }
+            .sync-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .config-profile-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .config-name-field { grid-column: 1 / -1; }
             .preset-dialog-backdrop { padding: 10px; }
@@ -1644,8 +1699,8 @@
             .preset-name-field { grid-column: auto; }
             .preset-weight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .preset-file-actions button { flex: 1 1 calc(50% - 4px); }
-            .car-scene { min-height: 510px; }
-            .car-plan { min-height: 490px; margin-top: 18px; }
+            .car-scene { min-height: 720px; }
+            .car-plan { min-height: 700px; margin-top: 18px; }
             .car-tracking-module { left: 0; right: 0; padding: 9px 7px 10px; }
             .tracking-module-title span { display: none; }
             .car-tracking-module .sensors { gap: 3px; }
@@ -1657,7 +1712,10 @@
             .car-chassis::before, .car-chassis::after { width: 14px; height: 44px; }
             .car-chassis::before { left: -11px; }
             .car-chassis::after { right: -11px; }
-            .car-center-console { top: 198px; left: 13%; right: 13%; padding: 11px 8px; }
+            .car-center-console { top: 220px; left: 25%; right: 25%; padding: 11px 8px; }
+            .wheel-telemetry { top: 145px; width: 29%; padding: 7px 8px; }
+            .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 390px; }
+            .wheel-telemetry strong { font-size: 15px; }
             .car-drive-unit { bottom: 36px; width: 44%; min-height: 124px; padding: 11px 10px; }
             .car-drive-unit.left { left: 3%; }
             .car-drive-unit.right { right: 3%; }

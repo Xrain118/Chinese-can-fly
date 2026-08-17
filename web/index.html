@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>八路循迹蓝牙调试台</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=2">
 </head>
 <body>
     <header class="app-header">
@@ -22,11 +22,11 @@
                 </div>
                 <label for="baudRate" style="font-size:12px;color:#b8cad5">波特率</label>
                 <select id="baudRate" aria-label="串口波特率">
-                    <option value="9600" selected>9600</option>
+                    <option value="9600">9600</option>
                     <option value="19200">19200</option>
                     <option value="38400">38400</option>
                     <option value="57600">57600</option>
-                    <option value="115200">115200</option>
+                    <option value="115200" selected>115200</option>
                 </select>
                 <label class="auto-reconnect-option" for="autoReconnect">
                     <input id="autoReconnect" type="checkbox" checked>
@@ -60,7 +60,7 @@
                 <div class="card-head">
                     <div>
                         <h2>小车俯视实时状态</h2>
-                        <div class="hint">探头位置为 −70 … +70 mm（20 mm 间距），左侧/右侧均为双电机并联</div>
+                        <div class="hint">四路编码器独立测速；左侧/右侧电机分别共用一个驱动通道</div>
                     </div>
                     <div id="runState" class="run-pill">STOP</div>
                 </div>
@@ -91,23 +91,27 @@
                                     <div class="car-live-stat"><span>最后遥测</span><strong id="telemetryAge">--</strong></div>
                                 </div>
                             </div>
+                            <div class="wheel-telemetry left-front"><span>左前轮 LF</span><strong id="encoderLeftFront">0</strong><small>CPS</small></div>
+                            <div class="wheel-telemetry left-rear"><span>左后轮 LR</span><strong id="encoderLeftRear">0</strong><small>CPS</small></div>
+                            <div class="wheel-telemetry right-front"><span>右前轮 RF</span><strong id="encoderRightFront">0</strong><small>CPS</small></div>
+                            <div class="wheel-telemetry right-rear"><span>右后轮 RR</span><strong id="encoderRightRear">0</strong><small>CPS</small></div>
                             <div class="car-drive-unit left">
                                 <span class="car-wheel" aria-hidden="true"></span>
-                                <div class="drive-unit-title"><strong>左侧电机对（双并联）</strong><span>M1</span></div>
+                                <div class="drive-unit-title"><strong>左侧驱动通道</strong><span>M1 · 双并联</span></div>
                                 <div class="drive-unit-values">
                                     <div class="drive-unit-value"><span>PWM</span><strong id="pwmLeft">0</strong></div>
                                     <div class="drive-unit-value"><span>目标 CPS</span><strong id="targetLeft">0</strong></div>
-                                    <div class="drive-unit-value"><span>实际 CPS</span><strong id="encoderLeft">0</strong></div>
+                                    <div class="drive-unit-value"><span>侧平均 CPS</span><strong id="encoderLeft">0</strong></div>
                                 </div>
                                 <div class="signed-bar" aria-label="左电机 PWM"><span id="pwmLeftBar" class="signed-fill"></span></div>
                             </div>
                             <div class="car-drive-unit right">
                                 <span class="car-wheel" aria-hidden="true"></span>
-                                <div class="drive-unit-title"><strong>右侧电机对（双并联）</strong><span>M2</span></div>
+                                <div class="drive-unit-title"><strong>右侧驱动通道</strong><span>M2 · 双并联</span></div>
                                 <div class="drive-unit-values">
                                     <div class="drive-unit-value"><span>PWM</span><strong id="pwmRight">0</strong></div>
                                     <div class="drive-unit-value"><span>目标 CPS</span><strong id="targetRight">0</strong></div>
-                                    <div class="drive-unit-value"><span>实际 CPS</span><strong id="encoderRight">0</strong></div>
+                                    <div class="drive-unit-value"><span>侧平均 CPS</span><strong id="encoderRight">0</strong></div>
                                 </div>
                                 <div class="signed-bar" aria-label="右电机 PWM"><span id="pwmRightBar" class="signed-fill"></span></div>
                             </div>
@@ -283,11 +287,11 @@
 
             <section class="card">
                 <div class="card-head">
-                    <div><h2>编码器速度 PI</h2><div class="hint">只把实际 CPS 拉向自动生成的目标 CPS</div></div>
+                    <div><h2>左右侧速度 PI（共享参数）</h2><div class="hint">左右各运行一个 PI，反馈值分别取同侧前后轮平均 CPS</div></div>
                     <span id="encoderParameterScope" class="scope-badge">ENC OFF 正在生效</span>
                 </div>
                 <div class="card-body">
-                    <div class="context-note">这里没有第二个基础速度。目标 CPS = 模式分配后的指令 × 满量程 CPS ÷ 1000；只有上方选择“编码器闭环”时 Kp/Ki 才参与输出。</div>
+                    <div class="context-note">同侧两台电机共用 PWM，前后轮 CPS 仅用于求平均和诊断，不能通过本控制器单独调平。只有上方选择“编码器闭环”时 Kp/Ki 才参与输出。</div>
                     <div class="encoder-loop-note">
                         <strong>试运行建议</strong>
                         先架空车轮，刷新并确认参数；校准“满量程 CPS”后再启用。若方向异常或振荡，立即旁路速度环。
@@ -304,6 +308,32 @@
                     <div class="command-row single-command" style="margin-top:13px">
                         <div class="field"><label for="encoderLimitInput">速度环 PWM 修正限幅（0～1000）</label><input id="encoderLimitInput" type="number" value="100" min="0" max="1000" step="1"></div>
                         <button id="sendEncoderLimitButton" type="button">发送修正限幅</button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card sync-control-card">
+                <div class="card-head">
+                    <div><h2>左右速度同步 P</h2><div class="hint">跟踪目标左右速度差，转弯时不会强制两侧同速</div></div>
+                    <span id="encoderSyncScope" class="scope-badge">SYNC OFF</span>
+                </div>
+                <div class="card-body">
+                    <div class="context-note">同步误差 =（左目标 − 右目标）−（左平均实测 − 右平均实测）。仅在 ENC ON、两侧目标同向且非零时参与输出。</div>
+                    <div class="encoder-loop-actions sync-loop-actions" role="group" aria-label="左右速度同步开关">
+                        <button id="encoderSyncOffButton" class="secondary active" type="button" aria-pressed="true">关闭同步</button>
+                        <button id="encoderSyncOnButton" class="secondary" type="button" aria-pressed="false">开启同步</button>
+                    </div>
+                    <div class="command-row sync-gain-row">
+                        <div class="field"><label for="encoderSyncKpInput">同步 Kp（0～1）</label><input id="encoderSyncKpInput" type="number" value="0.01" min="0" max="1" step="0.001"></div>
+                        <div class="field"><label for="encoderSyncToleranceInput">容差（0～50000 CPS）</label><input id="encoderSyncToleranceInput" type="number" value="50" min="0" max="50000" step="1"></div>
+                        <div class="field"><label for="encoderSyncLimitInput">修正限幅（0～1000 PWM）</label><input id="encoderSyncLimitInput" type="number" value="50" min="0" max="1000" step="1"></div>
+                        <button id="sendEncoderSyncButton" type="button">发送同步参数</button>
+                    </div>
+                    <div class="sync-runtime-grid" aria-label="同步控制实时状态">
+                        <div><span>目标速度差</span><strong id="encoderTargetDiff">0</strong><small>CPS</small></div>
+                        <div><span>实测速度差</span><strong id="encoderMeasuredDiff">0</strong><small>CPS</small></div>
+                        <div><span>同步误差</span><strong id="encoderSyncError">0</strong><small>CPS</small></div>
+                        <div><span>同步修正</span><strong id="encoderSyncCorrection">0</strong><small>PWM</small></div>
                     </div>
                 </div>
             </section>
@@ -509,7 +539,7 @@
                         <legend>基本设置</legend>
                         <div class="preset-fields four-columns">
                             <div class="field preset-name-field"><label for="presetNameInput">预设名称</label><input id="presetNameInput" type="text" value="默认调试配置" maxlength="80" autocomplete="off"></div>
-                            <div class="field"><label for="presetBaudRateSelect">串口波特率</label><select id="presetBaudRateSelect"><option value="9600" selected>9600</option><option value="19200">19200</option><option value="38400">38400</option><option value="57600">57600</option><option value="115200">115200</option></select></div>
+                            <div class="field"><label for="presetBaudRateSelect">串口波特率</label><select id="presetBaudRateSelect"><option value="9600">9600</option><option value="19200">19200</option><option value="38400">38400</option><option value="57600">57600</option><option value="115200" selected>115200</option></select></div>
                             <div class="field"><label for="presetAutoReconnectSelect">自动重连</label><select id="presetAutoReconnectSelect"><option value="on" selected>开启</option><option value="off">关闭</option></select></div>
                             <div class="field"><label for="presetDriveModeSelect">运行模式</label><select id="presetDriveModeSelect"><option value="track" selected>循迹模式</option><option value="straight">直行模式</option><option value="angle">角度模式</option></select></div>
                             <div class="field"><label for="presetSpeedInput">基础速度 SPEED（0～1000）</label><input id="presetSpeedInput" type="number" value="400" min="0" max="1000" step="1"></div>
@@ -549,6 +579,16 @@
                             <div class="field"><label for="presetEncoderKiInput">速度 Ki（0～10）</label><input id="presetEncoderKiInput" type="number" value="0" min="0" max="10" step="0.01"></div>
                             <div class="field"><label for="presetEncoderFullScaleInput">满量程 CPS（100～50000）</label><input id="presetEncoderFullScaleInput" type="number" value="5000" min="100" max="50000" step="1"></div>
                             <div class="field"><label for="presetEncoderLimitInput">PWM 修正限幅（0～1000）</label><input id="presetEncoderLimitInput" type="number" value="100" min="0" max="1000" step="1"></div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="preset-form-section">
+                        <legend>左右速度同步 P</legend>
+                        <div class="preset-fields two-columns">
+                            <div class="field"><label for="presetEncoderSyncEnabledSelect">同步控制</label><select id="presetEncoderSyncEnabledSelect"><option value="on">开启</option><option value="off" selected>关闭</option></select></div>
+                            <div class="field"><label for="presetEncoderSyncKpInput">同步 Kp（0～1）</label><input id="presetEncoderSyncKpInput" type="number" value="0.01" min="0" max="1" step="0.001"></div>
+                            <div class="field"><label for="presetEncoderSyncToleranceInput">容差（0～50000 CPS）</label><input id="presetEncoderSyncToleranceInput" type="number" value="50" min="0" max="50000" step="1"></div>
+                            <div class="field"><label for="presetEncoderSyncLimitInput">修正限幅（0～1000 PWM）</label><input id="presetEncoderSyncLimitInput" type="number" value="50" min="0" max="1000" step="1"></div>
                         </div>
                     </fieldset>
 

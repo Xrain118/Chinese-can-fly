@@ -9,6 +9,8 @@
             "presetKpInput", "presetKiInput", "presetKdInput", "presetLimitInput",
             "presetEncoderEnabledSelect", "presetEncoderKpInput", "presetEncoderKiInput",
             "presetEncoderFullScaleInput", "presetEncoderLimitInput",
+            "presetEncoderSyncEnabledSelect", "presetEncoderSyncKpInput",
+            "presetEncoderSyncToleranceInput", "presetEncoderSyncLimitInput",
             "presetWeight1", "presetWeight2", "presetWeight3", "presetWeight4",
             "presetWeight5", "presetWeight6", "presetWeight7", "presetWeight8"
         ];
@@ -57,14 +59,14 @@
         /**
          * 校验并规范化导入、本地存储或页面收集到的整套配置。
          * 返回对象始终是当前版本；校验失败会抛错，调用方不会部分覆盖当前预设。
-         * 本页面是 STM32 四驱八路版的首个格式，只接受 v1。
+         * v1 预设没有同步环字段，读取时补入关闭状态和保守默认参数。
          */
         function validateConfiguration(rawConfiguration) {
             const raw = configObject(rawConfiguration, "配置文件");
             if (raw.format !== CONFIG_FORMAT) throw new Error("不是本调试台支持的配置文件");
             const sourceVersion = Number(raw.version);
-            if (sourceVersion !== CONFIG_VERSION) {
-                throw new Error(`不支持配置版本 ${raw.version ?? "未知"}，当前支持 v${CONFIG_VERSION}`);
+            if (sourceVersion !== 1 && sourceVersion !== CONFIG_VERSION) {
+                throw new Error(`不支持配置版本 ${raw.version ?? "未知"}，当前支持 v1 / v${CONFIG_VERSION}`);
             }
 
             const interfaceConfig = configObject(raw.interface, "interface");
@@ -72,6 +74,9 @@
             const tracking = configObject(raw.tracking, "tracking");
             const angle = configObject(raw.angle, "angle");
             const encoder = configObject(raw.encoder, "encoder");
+            const encoderSync = sourceVersion === 1 && encoder.sync === undefined
+                ? { enabled: false, kp: 0.01, toleranceCps: 50, correctionLimit: 50 }
+                : configObject(encoder.sync, "encoder.sync");
             const name = String(raw.name ?? "未命名配置").trim() || "未命名配置";
             if (name.length > 80) throw new Error("配置名称不能超过 80 个字符");
 
@@ -131,7 +136,13 @@
                     kp: configNumber(encoder.kp, "encoder.kp", 0, 1),
                     ki: configNumber(encoder.ki, "encoder.ki", 0, 10),
                     fullScaleCps: configNumber(encoder.fullScaleCps, "encoder.fullScaleCps", 100, 50000, true),
-                    correctionLimit: configNumber(encoder.correctionLimit, "encoder.correctionLimit", 0, 1000, true)
+                    correctionLimit: configNumber(encoder.correctionLimit, "encoder.correctionLimit", 0, 1000, true),
+                    sync: {
+                        enabled: configBoolean(encoderSync.enabled, "encoder.sync.enabled"),
+                        kp: configNumber(encoderSync.kp, "encoder.sync.kp", 0, 1),
+                        toleranceCps: configNumber(encoderSync.toleranceCps, "encoder.sync.toleranceCps", 0, 50000, true),
+                        correctionLimit: configNumber(encoderSync.correctionLimit, "encoder.sync.correctionLimit", 0, 1000, true)
+                    }
                 }
             };
         }
@@ -178,7 +189,13 @@
                     kp: controlValue("encoderKpInput"),
                     ki: controlValue("encoderKiInput"),
                     fullScaleCps: controlValue("encoderFullScaleInput"),
-                    correctionLimit: controlValue("encoderLimitInput")
+                    correctionLimit: controlValue("encoderLimitInput"),
+                    sync: {
+                        enabled: encoderSyncEnabled,
+                        kp: controlValue("encoderSyncKpInput"),
+                        toleranceCps: controlValue("encoderSyncToleranceInput"),
+                        correctionLimit: controlValue("encoderSyncLimitInput")
+                    }
                 }
             });
         }
@@ -220,7 +237,13 @@
                     kp: controlValue("presetEncoderKpInput"),
                     ki: controlValue("presetEncoderKiInput"),
                     fullScaleCps: controlValue("presetEncoderFullScaleInput"),
-                    correctionLimit: controlValue("presetEncoderLimitInput")
+                    correctionLimit: controlValue("presetEncoderLimitInput"),
+                    sync: {
+                        enabled: controlValue("presetEncoderSyncEnabledSelect"),
+                        kp: controlValue("presetEncoderSyncKpInput"),
+                        toleranceCps: controlValue("presetEncoderSyncToleranceInput"),
+                        correctionLimit: controlValue("presetEncoderSyncLimitInput")
+                    }
                 }
             });
         }
@@ -255,6 +278,10 @@
                 setControlValue("presetEncoderKiInput", config.encoder.ki);
                 setControlValue("presetEncoderFullScaleInput", config.encoder.fullScaleCps);
                 setControlValue("presetEncoderLimitInput", config.encoder.correctionLimit);
+                setControlValue("presetEncoderSyncEnabledSelect", config.encoder.sync.enabled ? "on" : "off");
+                setControlValue("presetEncoderSyncKpInput", config.encoder.sync.kp);
+                setControlValue("presetEncoderSyncToleranceInput", config.encoder.sync.toleranceCps);
+                setControlValue("presetEncoderSyncLimitInput", config.encoder.sync.correctionLimit);
                 config.tracking.weights.forEach((weight, index) => setControlValue("presetWeight" + (index + 1), weight));
             } finally {
                 presetFormSyncing = false;
@@ -458,7 +485,7 @@
         }
 
         /**
-         * 将一份已验证的 v1 预设转换为安全串口命令序列。
+         * 将一份已验证的 v2 预设转换为安全串口命令序列。
          * 先停止整车；只下发可保存配置，绝不自动恢复运行状态。
          */
         function buildConfigurationCommands(configuration) {
@@ -478,8 +505,10 @@
                 `ENC PID ${config.encoder.kp} ${config.encoder.ki}`,
                 "ENC CPS " + config.encoder.fullScaleCps,
                 "ENC LIMIT " + config.encoder.correctionLimit,
+                `ENC SYNC ${config.encoder.sync.kp} ${config.encoder.sync.toleranceCps} ${config.encoder.sync.correctionLimit}`,
                 "WEIGHTS " + config.tracking.weights.join(" "),
-                "ENC " + (config.encoder.enabled ? "ON" : "OFF")
+                "ENC " + (config.encoder.enabled ? "ON" : "OFF"),
+                "ENC SYNC " + (config.encoder.sync.enabled ? "ON" : "OFF")
             ];
         }
 

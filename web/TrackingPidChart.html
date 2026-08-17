@@ -324,7 +324,7 @@
 
     <main>
         <div class="notice">
-            <span>图表页不占用串口。请保持 <strong>TrackingBluetoothDebugger.html</strong> 打开并已连接小车，解析后的全部数值会自动送入这里。</span>
+            <span>图表页不占用串口。请保持 <strong>index.html</strong> 打开并已连接小车，解析后的全部数值会自动送入这里。</span>
             <button id="demoButton" class="small secondary" type="button">试用模拟数据</button>
         </div>
 
@@ -409,6 +409,10 @@
                         <button class="small secondary preset-button" type="button" data-preset="leftSpeed">左轮速度 PI</button>
                         <button class="small secondary preset-button" type="button" data-preset="rightSpeed">右轮速度 PI</button>
                         <button class="small secondary preset-button" type="button" data-preset="compare">左右对比</button>
+                        <button class="small secondary preset-button" type="button" data-preset="fourWheels">四轮对比</button>
+                        <button class="small secondary preset-button" type="button" data-preset="leftWheels">左侧前后轮</button>
+                        <button class="small secondary preset-button" type="button" data-preset="rightWheels">右侧前后轮</button>
+                        <button class="small secondary preset-button" type="button" data-preset="sync">同步环</button>
                     </div>
                 </div>
                 <div id="fieldList" class="field-list"></div>
@@ -433,12 +437,22 @@
             "telemetry.PWM_R": { label: "右轮 PWM", group: "电机与编码器", unit: "" },
             "telemetry.ENC_L": { label: "左轮实际速度", group: "电机与编码器", unit: "CPS" },
             "telemetry.ENC_R": { label: "右轮实际速度", group: "电机与编码器", unit: "CPS" },
+            "telemetry.ENC_LF": { label: "左前轮速度", group: "四轮编码器", unit: "CPS" },
+            "telemetry.ENC_LR": { label: "左后轮速度", group: "四轮编码器", unit: "CPS" },
+            "telemetry.ENC_RF": { label: "右前轮速度", group: "四轮编码器", unit: "CPS" },
+            "telemetry.ENC_RR": { label: "右后轮速度", group: "四轮编码器", unit: "CPS" },
             "telemetry.TARGET_L": { label: "左轮目标速度", group: "电机与编码器", unit: "CPS" },
             "telemetry.TARGET_R": { label: "右轮目标速度", group: "电机与编码器", unit: "CPS" },
             "derived.ENC_ERROR_L": { label: "左轮速度误差", group: "PID 派生量", unit: "CPS" },
             "derived.ENC_ERROR_R": { label: "右轮速度误差", group: "PID 派生量", unit: "CPS" },
             "derived.ENC_AVG": { label: "左右轮平均速度", group: "PID 派生量", unit: "CPS" },
             "derived.ENC_DIFF": { label: "左右轮速度差", group: "PID 派生量", unit: "CPS" },
+            "derived.TARGET_DIFF": { label: "左右目标速度差", group: "同步控制", unit: "CPS" },
+            "derived.ENC_DIFF_LEFT_WHEELS": { label: "左侧前后轮差", group: "四轮编码器", unit: "CPS" },
+            "derived.ENC_DIFF_RIGHT_WHEELS": { label: "右侧前后轮差", group: "四轮编码器", unit: "CPS" },
+            "telemetry.ENC_SYNC_DIFF": { label: "左右同步误差", group: "同步控制", unit: "CPS" },
+            "telemetry.ENC_SYNC_PWM": { label: "同步 PWM 修正", group: "同步控制", unit: "PWM" },
+            "telemetry.ENC_SYNC_ACTIVE": { label: "同步环活动状态", group: "同步控制", unit: "" },
             "derived.TARGET_AVG": { label: "左右轮平均目标", group: "PID 派生量", unit: "CPS" },
             "derived.PWM_AVG": { label: "左右轮平均 PWM", group: "PID 派生量", unit: "" },
             "derived.PWM_DIFF": { label: "左右轮 PWM 差", group: "PID 派生量", unit: "" },
@@ -463,6 +477,10 @@
             "state.ENC_KP": { label: "编码器 Kp", group: "控制参数", unit: "" },
             "state.ENC_KI": { label: "编码器 Ki", group: "控制参数", unit: "" },
             "state.ENC_LIMIT": { label: "编码器输出限幅", group: "控制参数", unit: "" },
+            "state.ENC_SYNC_ENABLED": { label: "同步功能开关", group: "控制参数", unit: "" },
+            "state.ENC_SYNC_KP": { label: "同步 Kp", group: "控制参数", unit: "" },
+            "state.ENC_SYNC_TOLERANCE": { label: "同步容差", group: "控制参数", unit: "CPS" },
+            "state.ENC_SYNC_LIMIT": { label: "同步修正限幅", group: "控制参数", unit: "PWM" },
             "imu.ROLL": { label: "横滚 Roll", group: "IMU 姿态", unit: "°" },
             "imu.PITCH": { label: "俯仰 Pitch", group: "IMU 姿态", unit: "°" },
             "imu.YAW": { label: "偏航 Yaw", group: "IMU 姿态", unit: "°" },
@@ -474,12 +492,16 @@
             "imu.GZ": { label: "角速度 Z", group: "IMU 角速度", unit: "rad/s" }
         };
 
-        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "PID 派生量", "控制参数", "八路循迹传感器", "IMU 姿态", "IMU 加速度", "IMU 角速度", "运行状态", "遥测扩展", "IMU 扩展", "状态扩展", "自定义"];
+        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "四轮编码器", "同步控制", "PID 派生量", "控制参数", "八路循迹传感器", "IMU 姿态", "IMU 加速度", "IMU 角速度", "运行状态", "遥测扩展", "IMU 扩展", "状态扩展", "自定义"];
         const PRESETS = {
             tracking: ["telemetry.ERR", "telemetry.PWM_L", "telemetry.PWM_R"],
             leftSpeed: ["telemetry.TARGET_L", "telemetry.ENC_L", "derived.ENC_ERROR_L", "telemetry.PWM_L"],
             rightSpeed: ["telemetry.TARGET_R", "telemetry.ENC_R", "derived.ENC_ERROR_R", "telemetry.PWM_R"],
-            compare: ["telemetry.TARGET_L", "telemetry.TARGET_R", "telemetry.ENC_L", "telemetry.ENC_R"]
+            compare: ["telemetry.TARGET_L", "telemetry.TARGET_R", "telemetry.ENC_L", "telemetry.ENC_R"],
+            fourWheels: ["telemetry.ENC_LF", "telemetry.ENC_LR", "telemetry.ENC_RF", "telemetry.ENC_RR"],
+            leftWheels: ["telemetry.ENC_LF", "telemetry.ENC_LR", "telemetry.ENC_L", "derived.ENC_DIFF_LEFT_WHEELS"],
+            rightWheels: ["telemetry.ENC_RF", "telemetry.ENC_RR", "telemetry.ENC_R", "derived.ENC_DIFF_RIGHT_WHEELS"],
+            sync: ["derived.TARGET_DIFF", "derived.ENC_DIFF", "telemetry.ENC_SYNC_DIFF", "telemetry.ENC_SYNC_PWM"]
         };
 
         const elements = {
@@ -840,18 +862,33 @@
             const overshoot = 46 * Math.exp(-1.3 * (elapsed % 4)) * Math.sin(8.4 * (elapsed % 4));
             const left = model.left + overshoot + Math.sin(elapsed * 12) * 3;
             const right = model.right + overshoot * 0.7 + Math.cos(elapsed * 10) * 4;
+            const leftFront = left + Math.sin(elapsed * 7.1) * 7;
+            const leftRear = left - Math.sin(elapsed * 7.1) * 7;
+            const rightFront = right + Math.cos(elapsed * 6.4) * 6;
+            const rightRear = right - Math.cos(elapsed * 6.4) * 6;
+            const syncError = (targetLeft - targetRight) - (left - right);
             const values = {
                 "telemetry.ERR": Math.sin(elapsed * 1.8) * 520 + Math.sin(elapsed * 5.3) * 65,
                 "telemetry.TARGET_L": targetLeft,
                 "telemetry.TARGET_R": targetRight,
                 "telemetry.ENC_L": left,
                 "telemetry.ENC_R": right,
+                "telemetry.ENC_LF": leftFront,
+                "telemetry.ENC_LR": leftRear,
+                "telemetry.ENC_RF": rightFront,
+                "telemetry.ENC_RR": rightRear,
+                "telemetry.ENC_SYNC_DIFF": syncError,
+                "telemetry.ENC_SYNC_PWM": Math.max(-50, Math.min(50, syncError * 0.01)),
+                "telemetry.ENC_SYNC_ACTIVE": 1,
                 "telemetry.PWM_L": Math.max(-1000, Math.min(1000, 120 + (targetLeft - left) * 1.5)),
                 "telemetry.PWM_R": Math.max(-1000, Math.min(1000, 120 + (targetRight - right) * 1.5)),
                 "derived.ENC_ERROR_L": targetLeft - left,
                 "derived.ENC_ERROR_R": targetRight - right,
                 "derived.ENC_AVG": (left + right) / 2,
                 "derived.ENC_DIFF": left - right,
+                "derived.TARGET_DIFF": targetLeft - targetRight,
+                "derived.ENC_DIFF_LEFT_WHEELS": leftFront - leftRear,
+                "derived.ENC_DIFF_RIGHT_WHEELS": rightFront - rightRear,
                 "derived.TARGET_AVG": (targetLeft + targetRight) / 2,
                 "derived.PWM_DIFF": (targetLeft - left) * 1.5 - (targetRight - right) * 1.5,
                 "state.KP": 0.42,
@@ -1211,7 +1248,7 @@
             if (window.opener && !window.opener.closed) {
                 window.opener.focus();
             } else {
-                window.location.href = new URL("TrackingBluetoothDebugger.html", window.location.href).href;
+                window.location.href = new URL("index.html", window.location.href).href;
             }
         });
         elements.demoButton.addEventListener("click", toggleDemo);

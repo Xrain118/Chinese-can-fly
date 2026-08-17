@@ -224,6 +224,17 @@
             if (limit !== null) sendConfigurationCommand("ENC LIMIT " + limit);
         });
 
+        document.getElementById("encoderSyncOnButton").addEventListener("click", () => sendConfigurationCommand("ENC SYNC ON"));
+        document.getElementById("encoderSyncOffButton").addEventListener("click", () => sendConfigurationCommand("ENC SYNC OFF"));
+        document.getElementById("sendEncoderSyncButton").addEventListener("click", () => {
+            const kp = rangedInput("encoderSyncKpInput", 0, 1);
+            const tolerance = rangedInput("encoderSyncToleranceInput", 0, 50000, true);
+            const limit = rangedInput("encoderSyncLimitInput", 0, 1000, true);
+            if (kp !== null && tolerance !== null && limit !== null) {
+                sendConfigurationCommand(`ENC SYNC ${kp} ${tolerance} ${limit}`);
+            }
+        });
+
         document.querySelectorAll(".send-weight").forEach(button => {
             button.addEventListener("click", () => {
                 const channel = Number(button.dataset.channel);

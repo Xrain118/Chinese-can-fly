@@ -153,6 +153,39 @@
             renderAttitudeModel();
         }
 
+        function applyWheelAndSyncTelemetry(values) {
+            const fieldIds = {
+                PWM_L: "pwmLeft",
+                PWM_R: "pwmRight",
+                ENC_LF: "encoderLeftFront",
+                ENC_LR: "encoderLeftRear",
+                ENC_RF: "encoderRightFront",
+                ENC_RR: "encoderRightRear",
+                ENC_L: "encoderLeft",
+                ENC_R: "encoderRight",
+                TARGET_L: "targetLeft",
+                TARGET_R: "targetRight",
+                ENC_SYNC_DIFF: "encoderSyncError",
+                ENC_SYNC_PWM: "encoderSyncCorrection"
+            };
+            Object.entries(fieldIds).forEach(([key, id]) => {
+                if (values[key] !== undefined) document.getElementById(id).textContent = values[key];
+            });
+            if (values.PWM_L !== undefined) setSignedBar("pwmLeftBar", values.PWM_L);
+            if (values.PWM_R !== undefined) setSignedBar("pwmRightBar", values.PWM_R);
+            if (values.ENC_SYNC_ACTIVE !== undefined) setEncoderSyncActive(values.ENC_SYNC_ACTIVE);
+
+            const targetLeft = Number(document.getElementById("targetLeft").textContent);
+            const targetRight = Number(document.getElementById("targetRight").textContent);
+            const measuredLeft = Number(document.getElementById("encoderLeft").textContent);
+            const measuredRight = Number(document.getElementById("encoderRight").textContent);
+            document.getElementById("encoderTargetDiff").textContent =
+                Number.isFinite(targetLeft) && Number.isFinite(targetRight) ? targetLeft - targetRight : "--";
+            document.getElementById("encoderMeasuredDiff").textContent =
+                Number.isFinite(measuredLeft) && Number.isFinite(measuredRight) ? measuredLeft - measuredRight : "--";
+            renderLiveControlChain();
+        }
+
         function applyTelemetry(values) {
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
@@ -163,19 +196,7 @@
             setTrackingRuntime(values);
             if (values.ERR !== undefined) document.getElementById("errorValue").textContent = values.ERR;
 
-            if (values.PWM_L !== undefined) {
-                document.getElementById("pwmLeft").textContent = values.PWM_L;
-                setSignedBar("pwmLeftBar", values.PWM_L);
-            }
-            if (values.PWM_R !== undefined) {
-                document.getElementById("pwmRight").textContent = values.PWM_R;
-                setSignedBar("pwmRightBar", values.PWM_R);
-            }
-            if (values.ENC_L !== undefined) document.getElementById("encoderLeft").textContent = values.ENC_L;
-            if (values.ENC_R !== undefined) document.getElementById("encoderRight").textContent = values.ENC_R;
-            if (values.TARGET_L !== undefined) document.getElementById("targetLeft").textContent = values.TARGET_L;
-            if (values.TARGET_R !== undefined) document.getElementById("targetRight").textContent = values.TARGET_R;
-            renderLiveControlChain();
+            applyWheelAndSyncTelemetry(values);
 
             lastTelemetryAt = Date.now();
             document.getElementById("telemetryAge").textContent = "刚刚";
@@ -198,6 +219,9 @@
             setAngleRuntime(values);
             setTrackingRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            if (values.ENC_SYNC_ENABLED !== undefined) {
+                setEncoderSyncState(values.ENC_SYNC_ENABLED, values.ENC_SYNC_ACTIVE ?? encoderSyncActive);
+            }
             setInputValue("kpInput", values.KP);
             setInputValue("kiInput", values.KI);
             setInputValue("kdInput", values.KD);
@@ -216,9 +240,13 @@
             setInputValue("encoderKiInput", values.ENC_KI);
             setInputValue("encoderFullScaleInput", values.ENC_FULL_SCALE);
             setInputValue("encoderLimitInput", values.ENC_LIMIT);
+            setInputValue("encoderSyncKpInput", values.ENC_SYNC_KP);
+            setInputValue("encoderSyncToleranceInput", values.ENC_SYNC_TOLERANCE);
+            setInputValue("encoderSyncLimitInput", values.ENC_SYNC_LIMIT);
             for (let channel = 1; channel <= 8; channel += 1) {
                 setInputValue("weight" + channel, values["W" + channel]);
             }
+            applyWheelAndSyncTelemetry(values);
             if (typeof markDeviceConfigurationSynchronized === "function") markDeviceConfigurationSynchronized();
         }
 
@@ -235,7 +263,7 @@
                 /* 固件周期帧中的角度短字段：AH 航向、AE 误差、AO 输出、AS 状态、AR 就绪。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
-                    EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
+                    EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
                 });
                 applyTelemetry(values);
                 publishPidChartValues("telemetry", values);
@@ -254,7 +282,8 @@
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", EC: "ENCODER_CLOSED",
                     AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE",
-                    EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
+                    PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE",
+                    EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
                 });
                 applyState(values);
                 publishPidChartValues("state", values);

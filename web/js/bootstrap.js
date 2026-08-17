@@ -1,6 +1,6 @@
         "use strict";
 
-        const savedBaudRate = readStoredSetting(BAUD_RATE_STORAGE_KEY, "9600");
+        const savedBaudRate = readStoredSetting(BAUD_RATE_STORAGE_KEY, "115200");
         if (elements.baudRate.querySelector(`option[value="${savedBaudRate}"]`)) {
             elements.baudRate.value = savedBaudRate;
         }
@@ -68,6 +68,7 @@
         setSensorBits("00000000");
         setDriveMode(0);
         setEncoderLoopState(0);
+        setEncoderSyncState(0, 0);
         setBaseSpeed(document.getElementById("speedInput").value, true);
         renderLiveControlChain();
         initializeConfigurationManager();

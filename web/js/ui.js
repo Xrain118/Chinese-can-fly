@@ -90,6 +90,9 @@
                 derivedPair("derived.ENC_ERROR_R", "telemetry.TARGET_R", "telemetry.ENC_R", (target, actual) => target - actual);
                 derivedPair("derived.ENC_AVG", "telemetry.ENC_L", "telemetry.ENC_R", (left, right) => (left + right) / 2);
                 derivedPair("derived.ENC_DIFF", "telemetry.ENC_L", "telemetry.ENC_R", (left, right) => left - right);
+                derivedPair("derived.TARGET_DIFF", "telemetry.TARGET_L", "telemetry.TARGET_R", (left, right) => left - right);
+                derivedPair("derived.ENC_DIFF_LEFT_WHEELS", "telemetry.ENC_LF", "telemetry.ENC_LR", (front, rear) => front - rear);
+                derivedPair("derived.ENC_DIFF_RIGHT_WHEELS", "telemetry.ENC_RF", "telemetry.ENC_RR", (front, rear) => front - rear);
                 derivedPair("derived.TARGET_AVG", "telemetry.TARGET_L", "telemetry.TARGET_R", (left, right) => (left + right) / 2);
                 derivedPair("derived.PWM_AVG", "telemetry.PWM_L", "telemetry.PWM_R", (left, right) => (left + right) / 2);
                 derivedPair("derived.PWM_DIFF", "telemetry.PWM_L", "telemetry.PWM_R", (left, right) => left - right);
@@ -238,7 +241,7 @@
                 "#startButton, #stopButton, #getAllButton, #resetButton, #defaultsButton, #trackingModeButton, #straightModeButton, #angleModeButton, " +
                 "#sendAngleTargetButton, #sendAnglePidButton, #sendAnglePwmButton, #sendAngleSettlingButton, #resetVehicleYawButton, " +
                 "#sendPidButton, #sendSpeedButton, #sendLimitButton, #encoderOnButton, #encoderOffButton, " +
-                "#sendEncoderPidButton, #sendEncoderCpsButton, #sendEncoderLimitButton, #sendAllWeightsButton, " +
+                "#sendEncoderPidButton, #sendEncoderCpsButton, #sendEncoderLimitButton, #encoderSyncOnButton, #encoderSyncOffButton, #sendEncoderSyncButton, #sendAllWeightsButton, " +
                 ".send-weight, #sendManualButton, .quick-command, #refreshDeviceConfigButton"
             ).forEach(button => {
                 button.disabled = baseDisabled;
@@ -308,7 +311,9 @@
             /* HOLDING 状态由车端短路制动，不能显示成仍由编码器 PI 驱动。 */
             elements.chainExecutionValue.textContent = isAngle
                 ? (currentAngleState === 4 ? "短路制动保持" : (encoderLoopEnabled ? "角度 PID + 编码器 PI" : "角度 PID 直接 PWM"))
-                : (encoderLoopEnabled ? "编码器 PI 修正 PWM" : "直接 PWM");
+                : (encoderLoopEnabled
+                    ? (encoderSyncEnabled ? "速度 PI + 同步 P" : "编码器 PI 修正 PWM")
+                    : "直接 PWM");
             elements.executionDescription.textContent = isAngle
                 ? (encoderLoopEnabled
                     ? "ENC ON：角度 PID 产生左右反向轮速需求，编码器 PI 再修正最终 PWM。"
@@ -318,6 +323,7 @@
                     : "ENC OFF：SPEED 经模式分配后直接作为 PWM；目标 CPS 仅作换算参考。");
             elements.encoderParameterScope.textContent = encoderLoopEnabled ? "ENC ON 正在生效" : "ENC OFF 正在生效";
             elements.encoderParameterScope.classList.toggle("active", encoderLoopEnabled);
+            renderEncoderSyncState();
         }
 
         function setBaseSpeed(value, confirmed = false) {
@@ -422,6 +428,31 @@
             elements.encoderOnButton.setAttribute("aria-pressed", String(isEnabled));
             elements.encoderOffButton.setAttribute("aria-pressed", String(!isEnabled));
             renderControlStrategy();
+        }
+
+        function renderEncoderSyncState() {
+            if (!elements.encoderSyncScope) return;
+            const ready = encoderSyncEnabled && encoderLoopEnabled;
+            elements.encoderSyncScope.textContent = !encoderSyncEnabled
+                ? "SYNC OFF"
+                : (encoderSyncActive ? "同步修正中" : (ready ? "已开启 · 等待误差" : "等待 ENC ON"));
+            elements.encoderSyncScope.classList.toggle("active", ready);
+            elements.encoderSyncOnButton.classList.toggle("active", encoderSyncEnabled);
+            elements.encoderSyncOffButton.classList.toggle("active", !encoderSyncEnabled);
+            elements.encoderSyncOnButton.setAttribute("aria-pressed", String(encoderSyncEnabled));
+            elements.encoderSyncOffButton.setAttribute("aria-pressed", String(!encoderSyncEnabled));
+        }
+
+        function setEncoderSyncState(enabled, active = encoderSyncActive) {
+            encoderSyncEnabled = Number(enabled) === 1 || String(enabled).toUpperCase() === "ON";
+            encoderSyncActive = Number(active) === 1 || String(active).toUpperCase() === "ON";
+            renderEncoderSyncState();
+            renderControlStrategy();
+        }
+
+        function setEncoderSyncActive(active) {
+            encoderSyncActive = Number(active) === 1 || String(active).toUpperCase() === "ON";
+            renderEncoderSyncState();
         }
 
         function setSignedBar(id, rawValue) {

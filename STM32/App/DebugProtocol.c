@@ -204,9 +204,15 @@ void DebugProtocol_SendState(void)
 	Serial_SendString(",EKI=");
 	DebugProtocol_SendFixed6(DriveControl_GetEncoderKi());
 	Serial_Printf(
-		",EFS=%ld,ECL=%d,NB=%d,NS=%d,S=%s,SENS=%s,E=%d,PL=%d,PR=%d,",
+		",EFS=%ld,ECL=%d,ESE=%d,ESKP=",
 		(long)DriveControl_GetEncoderFullScaleCps(),
 		DriveControl_GetEncoderLimit(),
+		DriveControl_GetEncoderSyncEnabled());
+	DebugProtocol_SendFixed6(DriveControl_GetEncoderSyncKp());
+	Serial_Printf(
+		",EST=%ld,ESL=%d,NB=%d,NS=%d,S=%s,SENS=%s,E=%d,PL=%d,PR=%d,",
+		(long)DriveControl_GetEncoderSyncToleranceCps(),
+		DriveControl_GetEncoderSyncLimit(),
 		snapshot.speed,
 		snapshot.trackingState,
 		bits,
@@ -215,11 +221,20 @@ void DebugProtocol_SendState(void)
 		snapshot.appliedLeftPwm,
 		snapshot.appliedRightPwm);
 	Serial_Printf(
-		"EL=%ld,ER=%ld,TL=%ld,TR=%ld,AR=0,AS=0\r\n",
+		"EL=%ld,ER=%ld,TL=%ld,TR=%ld,",
 		(long)snapshot.leftMeasuredCps,
 		(long)snapshot.rightMeasuredCps,
 		(long)snapshot.leftTargetCps,
 		(long)snapshot.rightTargetCps);
+	Serial_Printf(
+		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d,AR=0,AS=0\r\n",
+		(long)snapshot.leftFrontCps,
+		(long)snapshot.leftRearCps,
+		(long)snapshot.rightFrontCps,
+		(long)snapshot.rightRearCps,
+		(long)snapshot.encoderSyncError,
+		snapshot.encoderSyncCorrection,
+		snapshot.encoderSyncActive);
 }
 
 void DebugProtocol_SendTelemetry(void)
@@ -241,17 +256,28 @@ void DebugProtocol_SendTelemetry(void)
 		snapshot.appliedLeftPwm,
 		snapshot.appliedRightPwm);
 	Serial_Printf(
-		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld\r\n",
+		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,",
 		(long)snapshot.leftMeasuredCps,
 		(long)snapshot.rightMeasuredCps,
 		snapshot.encoderClosed,
 		(long)snapshot.leftTargetCps,
 		(long)snapshot.rightTargetCps);
+	Serial_Printf(
+		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d\r\n",
+		(long)snapshot.leftFrontCps,
+		(long)snapshot.leftRearCps,
+		(long)snapshot.rightFrontCps,
+		(long)snapshot.rightRearCps,
+		(long)snapshot.encoderSyncError,
+		snapshot.encoderSyncCorrection,
+		snapshot.encoderSyncActive);
 }
 
 static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 {
 	int32_t ivalue;
+	int32_t syncTolerance;
+	int32_t syncLimit;
 	float kp;
 	float ki;
 	float kd;
@@ -460,6 +486,35 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 		{
 			if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U) ||
 				(DriveControl_SetEncoderLimit((int16_t)ivalue) == 0U))
+			{
+				DebugProtocol_SendErr("ENC", "ARG");
+			}
+			else
+			{
+				DebugProtocol_SendOk("ENC");
+			}
+			return;
+		}
+		if (DebugProtocol_StringEqual(tokens[1], "SYNC") != 0U)
+		{
+			if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "ON") != 0U))
+			{
+				DriveControl_SetEncoderSyncEnabled(1U);
+				DebugProtocol_SendOk("ENC");
+				return;
+			}
+			if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "OFF") != 0U))
+			{
+				DriveControl_SetEncoderSyncEnabled(0U);
+				DebugProtocol_SendOk("ENC");
+				return;
+			}
+			if ((count < 5U) ||
+				(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
+				(DebugProtocol_ParseInt(tokens[3], &syncTolerance) == 0U) ||
+				(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
+				(syncLimit > DRIVE_CONTROL_PWM_MAX) ||
+				(DriveControl_SetEncoderSync(kp, syncTolerance, (int16_t)syncLimit) == 0U))
 			{
 				DebugProtocol_SendErr("ENC", "ARG");
 			}

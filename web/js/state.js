@@ -32,6 +32,8 @@
         let angleZeroYaw = null;
         let currentDriveMode = 0;
         let encoderLoopEnabled = false;
+        let encoderSyncEnabled = false;
+        let encoderSyncActive = false;
         let configApplyRunning = false;
         let deviceConfigurationSynchronized = false;
         let vehicleConfigurationSynchronized = false;
@@ -66,18 +68,18 @@
         const COMMAND_TIMEOUT_MS = 5000;
         const RECONNECT_DELAYS_MS = [400, 800, 1500, 2500, 4000];
         const AUTO_RECONNECT_STORAGE_KEY = "trackingDebugger.autoReconnect";
-        const BAUD_RATE_STORAGE_KEY = "trackingDebugger.baudRate";
+        const BAUD_RATE_STORAGE_KEY = "trackingDebugger.baudRate.f407";
         const CONSOLE_PAGE_STORAGE_KEY = "trackingDebugger.consolePage";
         /* 全新 STM32 版本地存储 key，避免读到旧 MSPM0 页面保存的预设。 */
         const CONFIG_STORAGE_KEY = "stm32TrackingDebugger.configuration.v1";
         const CONFIG_FORMAT = "stm32-tracking-debugger-config";
-        const CONFIG_VERSION = 1;
+        const CONFIG_VERSION = 2;
         const PID_CHART_CHANNEL_NAME = "tracking-debugger-pid-chart-v1";
         /* 短字段与页面/图表使用的语义名称在此保持唯一映射，模式值 M 不再压缩为布尔量。 */
         const PID_CHART_ALIAS_KEYS = {
-            telemetry: { R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
+            telemetry: { R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
             imu: { R: "ROLL", P: "PITCH", Y: "YAW" },
-            state: { R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE", EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT" }
+            state: { R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE", EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT" }
         };
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder("utf-8");
@@ -141,6 +143,9 @@
             trackingWeightsScope: document.getElementById("trackingWeightsScope"),
             trackingRuntimeState: document.getElementById("trackingRuntimeState"),
             encoderParameterScope: document.getElementById("encoderParameterScope"),
+            encoderSyncScope: document.getElementById("encoderSyncScope"),
+            encoderSyncOnButton: document.getElementById("encoderSyncOnButton"),
+            encoderSyncOffButton: document.getElementById("encoderSyncOffButton"),
             controlStrategy: document.getElementById("controlStrategy"),
             response: document.getElementById("lastResponse"),
             commandToastStack: document.getElementById("commandToastStack"),
