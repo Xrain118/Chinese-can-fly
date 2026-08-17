@@ -1,13 +1,13 @@
 #ifndef __DRIVE_CONTROL_H
 #define __DRIVE_CONTROL_H
 
-#include "stm32f10x.h"
+#include <stdint.h>
 
 #define DRIVE_CONTROL_SENSOR_COUNT (8U)
 #define DRIVE_CONTROL_PWM_MAX      (1000)
 
 #ifndef DRIVE_CONTROL_ENABLE_HARDWARE
-#define DRIVE_CONTROL_ENABLE_HARDWARE (0U)
+#define DRIVE_CONTROL_ENABLE_HARDWARE (1U)
 #endif
 
 typedef enum

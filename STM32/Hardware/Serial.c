@@ -1,215 +1,148 @@
 #include "Serial.h"
-#include <stdio.h>
+#include "BoardPins.h"
+#include "BoardClock.h"
 #include <stdarg.h>
+#include <stdio.h>
 
-/** 接收环形缓冲及其读写指针（写=head，读=tail）。 */
-static uint8_t s_rxBuffer[SERIAL_RX_BUFFER_SIZE];
-static volatile uint16_t s_rxHead = 0U;
-static volatile uint16_t s_rxTail = 0U;
+static uint8_t g_rxBuffer[SERIAL_RX_BUFFER_SIZE];
+static volatile uint16_t g_rxHead;
+static volatile uint16_t g_rxTail;
 
-/**
- * @brief printf 重定向：把标准库输出的每个字符经蓝牙串口发出。
- * @param ch 要输出的字符。
- * @param f 文件指针（未使用）。
- * @retval 输出的字符。
- * @note 供 printf 等标准库函数调用，实现 printf 到蓝牙串口的重定向。
- */
-int fputc(int ch, FILE *f)
+static void Serial_SetAlternateFunction(GPIO_TypeDef *port, uint8_t pin, uint8_t af)
 {
-	(void)f;
-	Serial_SendByte((uint8_t)ch);
-	return ch;
+	uint32_t shift = (uint32_t)(pin & 7U) * 4U;
+	port->AFR[pin >> 3U] = (port->AFR[pin >> 3U] & ~(0xFUL << shift)) |
+						 ((uint32_t)af << shift);
 }
 
-/**
- * @brief USART1 接收中断：RXNE 时把收到的字节写入接收环形缓冲。
- * @param 无。
- * @retval 无。
- * @note 缓冲满时丢弃最旧的一个字节，避免 head 追上 tail 导致死锁。
- */
-void USART1_IRQHandler(void)
+int fputc(int character, FILE *file)
 {
-	if (USART_GetITStatus(SERIAL_USART, USART_IT_RXNE) != RESET)
-	{
-		/* 读 DR 会同时清除 RXNE 标志。 */
-		s_rxBuffer[s_rxHead] = (uint8_t)USART_ReceiveData(SERIAL_USART);
-		s_rxHead = (uint16_t)((s_rxHead + 1U) % SERIAL_RX_BUFFER_SIZE);
+	(void)file;
+	Serial_SendByte((uint8_t)character);
+	return character;
+}
 
-		/* 缓冲满（head 追上 tail）：丢弃最旧字节。 */
-		if (s_rxHead == s_rxTail)
+void USART2_IRQHandler(void)
+{
+	uint32_t status = BOARD_BT_USART->SR;
+	if ((status & USART_SR_RXNE) != 0U)
+	{
+		uint16_t next;
+		g_rxBuffer[g_rxHead] = (uint8_t)BOARD_BT_USART->DR;
+		next = (uint16_t)((g_rxHead + 1U) % SERIAL_RX_BUFFER_SIZE);
+		g_rxHead = next;
+		if (next == g_rxTail)
 		{
-			s_rxTail = (uint16_t)((s_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
+			g_rxTail = (uint16_t)((g_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
 		}
 	}
+	else if ((status & USART_SR_ORE) != 0U)
+	{
+		(void)BOARD_BT_USART->DR;
+	}
 }
 
-/**
- * @brief 初始化蓝牙串口（GPIO + USART1 + 接收中断）。
- * @param 无。
- * @retval 无。
- */
 void Serial_Init(void)
 {
-	GPIO_InitTypeDef GPIO_InitStructure;
-	USART_InitTypeDef USART_InitStructure;
-	NVIC_InitTypeDef NVIC_InitStructure;
+	uint32_t txShift = BOARD_BT_TX_PIN * 2U;
+	uint32_t rxShift = BOARD_BT_RX_PIN * 2U;
 
-	/* 第一步：使能 GPIOA 和 USART1 时钟。 */
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
-	RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;
+	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
+	(void)RCC->APB1ENR;
 
-	/* 第二步：配置 TX=PA9 为复用推挽输出。 */
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
-	GPIO_InitStructure.GPIO_Pin = SERIAL_TX_PIN;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_Init(SERIAL_TX_PORT, &GPIO_InitStructure);
+	BOARD_BT_PORT->MODER =
+		(BOARD_BT_PORT->MODER & ~((3UL << txShift) | (3UL << rxShift))) |
+		(2UL << txShift) | (2UL << rxShift);
+	BOARD_BT_PORT->OTYPER &= ~(BOARD_PIN_MASK(BOARD_BT_TX_PIN) |
+								BOARD_PIN_MASK(BOARD_BT_RX_PIN));
+	BOARD_BT_PORT->OSPEEDR |= (2UL << txShift) | (2UL << rxShift);
+	BOARD_BT_PORT->PUPDR =
+		(BOARD_BT_PORT->PUPDR & ~((3UL << txShift) | (3UL << rxShift))) |
+		(1UL << rxShift);
+	Serial_SetAlternateFunction(BOARD_BT_PORT, BOARD_BT_TX_PIN, BOARD_BT_AF);
+	Serial_SetAlternateFunction(BOARD_BT_PORT, BOARD_BT_RX_PIN, BOARD_BT_AF);
 
-	/* 第三步：配置 RX=PA10 为浮空输入。 */
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
-	GPIO_InitStructure.GPIO_Pin = SERIAL_RX_PIN;
-	GPIO_Init(SERIAL_RX_PORT, &GPIO_InitStructure);
+	g_rxHead = 0U;
+	g_rxTail = 0U;
+	BOARD_BT_USART->CR1 = 0U;
+	BOARD_BT_USART->CR2 = 0U;
+	BOARD_BT_USART->CR3 = 0U;
+	BOARD_BT_USART->BRR = (BOARD_APB1_CLOCK_HZ + (SERIAL_BAUD / 2UL)) / SERIAL_BAUD;
+	BOARD_BT_USART->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE |
+						 USART_CR1_UE;
 
-	/* 第四步：配置 USART1 为 9600、8 数据位、无校验、1 停止位。 */
-	USART_InitStructure.USART_BaudRate = SERIAL_BAUD;
-	USART_InitStructure.USART_WordLength = USART_WordLength_8b;
-	USART_InitStructure.USART_StopBits = USART_StopBits_1;
-	USART_InitStructure.USART_Parity = USART_Parity_No;
-	USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-	USART_InitStructure.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
-	USART_Init(SERIAL_USART, &USART_InitStructure);
-
-	/* 第五步：使能接收中断并配置 NVIC。 */
-	USART_ITConfig(SERIAL_USART, USART_IT_RXNE, ENABLE);
-
-	/* 中断优先级分组为系统级一次性设置，这里在唯一使用中断的模块中配置。 */
-	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
-
-	NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-	NVIC_Init(&NVIC_InitStructure);
-
-	/* 第六步：使能 USART1。 */
-	USART_Cmd(SERIAL_USART, ENABLE);
+	NVIC_SetPriority(USART2_IRQn, 2U);
+	NVIC_EnableIRQ(USART2_IRQn);
 }
 
-/**
- * @brief 阻塞发送一个字节。
- * @param Byte 要发送的字节。
- * @retval 无。
- */
-void Serial_SendByte(uint8_t Byte)
+void Serial_SendByte(uint8_t byte)
 {
-	while (USART_GetFlagStatus(SERIAL_USART, USART_FLAG_TXE) == RESET)
+	while ((BOARD_BT_USART->SR & USART_SR_TXE) == 0U)
 	{
 	}
-	USART_SendData(SERIAL_USART, Byte);
+	BOARD_BT_USART->DR = byte;
 }
 
-/**
- * @brief 阻塞发送一个字节数组。
- * @param Array 数据首地址。
- * @param Length 数据长度（字节）。
- * @retval 无。
- */
-void Serial_SendArray(uint8_t *Array, uint16_t Length)
+void Serial_SendArray(const uint8_t *array, uint16_t length)
 {
-	uint16_t i;
-	for (i = 0; i < Length; i++)
+	uint16_t index;
+	if (array == 0) return;
+	for (index = 0U; index < length; index++)
 	{
-		Serial_SendByte(Array[i]);
+		Serial_SendByte(array[index]);
 	}
 }
 
-/**
- * @brief 阻塞发送一个以 '\0' 结尾的字符串。
- * @param String 字符串首地址。
- * @retval 无。
- */
-void Serial_SendString(char *String)
+void Serial_SendString(const char *string)
 {
-	uint16_t i;
-	for (i = 0; String[i] != '\0'; i++)
+	if (string == 0) return;
+	while (*string != '\0')
 	{
-		Serial_SendByte((uint8_t)String[i]);
+		Serial_SendByte((uint8_t)*string++);
 	}
 }
 
-/**
- * @brief 阻塞发送数字（十进制，固定位数，高位补 0）。
- * @param Number 要发送的数字。
- * @param Length 发送的十进制位数。
- * @retval 无。
- */
-void Serial_SendNumber(uint32_t Number, uint8_t Length)
+void Serial_SendNumber(uint32_t number, uint8_t length)
 {
-	uint8_t i;
+	uint8_t index;
 	uint32_t divisor = 1U;
-
-	if (Length == 0U)
+	if (length == 0U) return;
+	for (index = 1U; index < length; index++) divisor *= 10U;
+	for (index = 0U; index < length; index++)
 	{
-		return;
-	}
-
-	/* 第一步：算出最高位对应的除数 10^(Length-1)。 */
-	for (i = 0; i < (uint8_t)(Length - 1U); i++)
-	{
-		divisor *= 10U;
-	}
-
-	/* 第二步：从高位到低位逐位发送。 */
-	for (i = 0; i < Length; i++)
-	{
-		Serial_SendByte((uint8_t)((Number / divisor) % 10U + (uint32_t)'0'));
+		Serial_SendByte((uint8_t)(((number / divisor) % 10U) + (uint32_t)'0'));
 		divisor /= 10U;
 	}
 }
 
-/**
- * @brief 格式化发送（printf 风格，可直接使用 %d/%s 等）。
- * @param format 格式串。
- * @param ... 可变参数。
- * @retval 无。
- */
-void Serial_Printf(char *format, ...)
+void Serial_Printf(const char *format, ...)
 {
-	char String[160];
-	va_list arg;
-	va_start(arg, format);
-	vsprintf(String, format, arg);
-	va_end(arg);
-	Serial_SendString(String);
+	char buffer[192];
+	va_list args;
+	if (format == 0) return;
+	va_start(args, format);
+	(void)vsnprintf(buffer, sizeof(buffer), format, args);
+	va_end(args);
+	buffer[sizeof(buffer) - 1U] = '\0';
+	Serial_SendString(buffer);
 }
 
-/**
- * @brief 查询接收缓冲中可读的字节数。
- * @param 无。
- * @retval 可用字节数。
- */
 uint16_t Serial_Available(void)
 {
-	if (s_rxHead >= s_rxTail)
-	{
-		return (uint16_t)(s_rxHead - s_rxTail);
-	}
-	return (uint16_t)(SERIAL_RX_BUFFER_SIZE + s_rxHead - s_rxTail);
+	uint16_t head = g_rxHead;
+	uint16_t tail = g_rxTail;
+	if (head >= tail) return (uint16_t)(head - tail);
+	return (uint16_t)(SERIAL_RX_BUFFER_SIZE + head - tail);
 }
 
-/**
- * @brief 从接收缓冲读取一个字节。
- * @param 无。
- * @retval 读取到的字节；缓冲为空时返回 0。
- */
 uint8_t Serial_ReadByte(void)
 {
-	uint8_t data = 0U;
-
-	if (s_rxHead != s_rxTail)
+	uint8_t value = 0U;
+	if (g_rxHead != g_rxTail)
 	{
-		data = s_rxBuffer[s_rxTail];
-		s_rxTail = (uint16_t)((s_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
+		value = g_rxBuffer[g_rxTail];
+		g_rxTail = (uint16_t)((g_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
 	}
-
-	return data;
+	return value;
 }

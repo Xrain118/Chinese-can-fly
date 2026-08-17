@@ -281,8 +281,8 @@ void DriveControl_LoadDefaults(void)
 void DriveControl_Init(void)
 {
 #if DRIVE_CONTROL_ENABLE_HARDWARE
-	Tracking_Init();
 	Motor_Init();
+	Tracking_Init();
 #endif
 	Encoder_Init();
 	DriveControl_LoadDefaults();
