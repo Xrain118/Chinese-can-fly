@@ -36,6 +36,10 @@
             return weights;
         }
 
+        function reportUnsupportedCommand(name) {
+            appendLog("ERR", `${name} 当前 F407 固件未接入，未发送命令`, "err");
+        }
+
         elements.consoleTabs.forEach((tab, index) => {
             tab.addEventListener("click", () => showConsolePage(tab.dataset.page));
             tab.addEventListener("keydown", event => {
@@ -67,14 +71,17 @@
             }
         });
         document.getElementById("startButton").addEventListener("click", () => sendCommand("START"));
-        document.getElementById("stopButton").addEventListener("click", () => sendCommand("STOP"));
+        document.getElementById("stopButton").addEventListener("click", () => {
+            if (typeof stopHeartbeat === "function") stopHeartbeat();
+            sendCommand("STOP");
+        });
         document.getElementById("getAllButton").addEventListener("click", () => sendCommand("GET ALL"));
         document.getElementById("resetButton").addEventListener("click", () => sendCommand("RESET"));
         document.getElementById("defaultsButton").addEventListener("click", () => sendConfigurationCommand("DEFAULTS"));
-        /* 三个按钮分别发送固件定义的模式 0/1/2；实际高亮仍等待 S 帧回读确认。 */
-        elements.trackingModeButton.addEventListener("click", () => sendConfigurationCommand("MODE TRACK"));
+        /* 当前 F407 固件只保留 DIRECT/STRAIGHT；旧循迹按钮映射为直接 PWM 模式。 */
+        elements.trackingModeButton.addEventListener("click", () => sendConfigurationCommand("MODE DIRECT"));
         elements.straightModeButton.addEventListener("click", () => sendConfigurationCommand("MODE STRAIGHT"));
-        elements.angleModeButton.addEventListener("click", () => sendConfigurationCommand("MODE ANGLE"));
+        elements.angleModeButton.addEventListener("click", () => reportUnsupportedCommand("角度模式"));
 
         elements.attitudeStage.addEventListener("pointerdown", event => {
             if (attitudeView.pointerId !== null || (event.pointerType === "mouse" && event.button !== 0)) return;
@@ -122,16 +129,9 @@
             renderAttitudeView();
         });
 
-        /*
-         * 车端归零会改变控制坐标系，所以严格串行等待 STOP 成功后再发 ANGLE ZERO，
-         * 最后 GET ALL 读取新目标、零位和状态。任一步失败都不继续后续命令。
-         */
-        elements.resetVehicleYawButton.addEventListener("click", async () => {
-            const stopResult = await sendCommand("STOP", true);
-            if (!stopResult.success) return;
-            const zeroResult = await sendCommand("ANGLE ZERO", true);
-            if (!zeroResult.success) return;
-            await sendCommand("GET ALL");
+        /* 当前固件不提供 ANGLE ZERO，按钮保留为旧页面占位。 */
+        elements.resetVehicleYawButton.addEventListener("click", () => {
+            reportUnsupportedCommand("ANGLE ZERO");
         });
 
         /* 三维模型姿态归零是纯显示功能，不发送任何车端命令，故与上方按钮分开。 */
@@ -151,7 +151,9 @@
 
             elements.zeroAttitudeButton.setAttribute("aria-pressed", String(attitudeZeroed));
             elements.zeroAttitudeButton.textContent = attitudeZeroed ? "恢复绝对姿态" : "以当前姿态归零";
-            elements.attitudeReference.textContent = attitudeZeroed ? "相对零位" : "绝对姿态";
+            if (elements.attitudeReference) {
+                elements.attitudeReference.textContent = attitudeZeroed ? "相对零位" : "绝对姿态";
+            }
             renderAttitudeModel();
         });
 
@@ -159,20 +161,20 @@
             const kp = rangedInput("kpInput", 0, 2);
             const ki = rangedInput("kiInput", 0, 2);
             const kd = rangedInput("kdInput", 0, 1);
-            if (kp !== null && ki !== null && kd !== null) sendConfigurationCommand(`PID ${kp} ${ki} ${kd}`);
+            if (kp !== null && ki !== null && kd !== null) reportUnsupportedCommand("循迹 PID");
         });
 
         /* 以下四组输入边界与固件 AnglePID.h 完全一致，错误值在浏览器端先行拦截。 */
         document.getElementById("sendAngleTargetButton").addEventListener("click", () => {
             const target = rangedInput("angleTargetInput", 0, 360);
-            if (target !== null) sendConfigurationCommand(`ANGLE TARGET ${target}`);
+            if (target !== null) reportUnsupportedCommand("ANGLE TARGET");
         });
 
         document.getElementById("sendAnglePidButton").addEventListener("click", () => {
             const kp = rangedInput("angleKpInput", 0, 20);
             const ki = rangedInput("angleKiInput", 0, 10);
             const kd = rangedInput("angleKdInput", 0, 10);
-            if (kp !== null && ki !== null && kd !== null) sendConfigurationCommand(`ANGLE PID ${kp} ${ki} ${kd}`);
+            if (kp !== null && ki !== null && kd !== null) reportUnsupportedCommand("ANGLE PID");
         });
 
         document.getElementById("sendAnglePwmButton").addEventListener("click", () => {
@@ -185,13 +187,13 @@
                 document.getElementById("angleMinimumPwmInput").focus();
                 return;
             }
-            sendConfigurationCommand(`ANGLE PWM ${minimum} ${maximum}`);
+            reportUnsupportedCommand("ANGLE PWM");
         });
 
         document.getElementById("sendAngleSettlingButton").addEventListener("click", () => {
             const tolerance = rangedInput("angleToleranceInput", 0.5, 20);
             const settleTime = rangedInput("angleSettleTimeInput", 50, 2000, true);
-            if (tolerance !== null && settleTime !== null) sendConfigurationCommand(`ANGLE SETTLE ${tolerance} ${settleTime}`);
+            if (tolerance !== null && settleTime !== null) reportUnsupportedCommand("ANGLE SETTLE");
         });
 
         document.getElementById("sendSpeedButton").addEventListener("click", () => {
@@ -239,13 +241,13 @@
             button.addEventListener("click", () => {
                 const channel = Number(button.dataset.channel);
                 const weights = readAndValidateWeights();
-                if (weights !== null) sendConfigurationCommand(`WEIGHT ${channel} ${weights[channel - 1]}`);
+                if (weights !== null) reportUnsupportedCommand(`WEIGHT CH${channel}`);
             });
         });
 
         document.getElementById("sendAllWeightsButton").addEventListener("click", () => {
             const weights = readAndValidateWeights();
-            if (weights !== null) sendConfigurationCommand("WEIGHTS " + weights.join(" "));
+            if (weights !== null) reportUnsupportedCommand("WEIGHTS");
         });
 
         const manualCommand = document.getElementById("manualCommand");

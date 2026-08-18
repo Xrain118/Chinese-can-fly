@@ -1,0 +1,9 @@
+ugv_serial_bridge:
+  ros__parameters:
+    port: /dev/serial0
+    baud: 115200
+    command_rate_hz: 10.0
+    cmd_vel_timeout_s: 0.25
+    wheel_base_m: 0.28
+    max_wheel_speed_mps: 0.80
+    imu_frame_id: imu_link

@@ -17,7 +17,7 @@
           <Device>STM32F407VETx</Device>
           <Vendor>STMicroelectronics</Vendor>
           <PackID>Keil.STM32F4xx_DFP.2.17.1</PackID>
-          <PackURL>http://www.keil.com/pack/</PackURL>
+          <PackURL>https://www.keil.com/pack/</PackURL>
           <Cpu>IROM(0x08000000,0x80000) IRAM(0x20000000,0x20000) IRAM2(0x10000000,0x10000) CPUTYPE("Cortex-M4") FPU2 CLOCK(12000000) ELITTLE</Cpu>
           <FlashUtilSpec></FlashUtilSpec>
           <StartupFile></StartupFile>
@@ -336,7 +336,7 @@
               <MiscControls>--no-multibyte-chars</MiscControls>
               <Define>STM32F407xx,HSE_VALUE=8000000</Define>
               <Undefine></Undefine>
-              <IncludePath>.\Start\F4;.\Start\CMSIS;.\User;.\System;.\Hardware;.\App</IncludePath>
+              <IncludePath>.\Start\F4;.\Start\CMSIS;.\User;.\System;.\Hardware;.\App;.\Middlewares\FreeRTOS-Kernel\include;.\Middlewares\FreeRTOS-Kernel\portable\RVDS\ARM_CM4F</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -445,6 +445,16 @@
               <FileType>5</FileType>
               <FilePath>.\System\Delay.h</FilePath>
             </File>
+            <File>
+              <FileName>FreeRTOSConfig.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\System\FreeRTOSConfig.h</FilePath>
+            </File>
+            <File>
+              <FileName>FreeRTOSHooks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\System\FreeRTOSHooks.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -486,16 +496,6 @@
               <FilePath>.\Hardware\Encoder.h</FilePath>
             </File>
             <File>
-              <FileName>Tracking.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\Tracking.c</FilePath>
-            </File>
-            <File>
-              <FileName>Tracking.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\Tracking.h</FilePath>
-            </File>
-            <File>
               <FileName>Serial.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\Serial.c</FilePath>
@@ -514,6 +514,16 @@
               <FileName>ICM42688.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\Hardware\ICM42688.h</FilePath>
+            </File>
+            <File>
+              <FileName>PowerMonitor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\PowerMonitor.c</FilePath>
+            </File>
+            <File>
+              <FileName>PowerMonitor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Hardware\PowerMonitor.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -549,6 +559,76 @@
               <FileName>DebugProtocol.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\App\DebugProtocol.h</FilePath>
+            </File>
+            <File>
+              <FileName>Safety.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\Safety.c</FilePath>
+            </File>
+            <File>
+              <FileName>Safety.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\Safety.h</FilePath>
+            </File>
+            <File>
+              <FileName>ProtocolTx.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\ProtocolTx.c</FilePath>
+            </File>
+            <File>
+              <FileName>ProtocolTx.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\ProtocolTx.h</FilePath>
+            </File>
+            <File>
+              <FileName>UgvCommand.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\UgvCommand.h</FilePath>
+            </File>
+            <File>
+              <FileName>UgvCommandQueue.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\UgvCommandQueue.c</FilePath>
+            </File>
+            <File>
+              <FileName>UgvCommandQueue.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\UgvCommandQueue.h</FilePath>
+            </File>
+            <File>
+              <FileName>UgvTasks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\App\UgvTasks.c</FilePath>
+            </File>
+            <File>
+              <FileName>UgvTasks.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\App\UgvTasks.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>FreeRTOS</GroupName>
+          <Files>
+            <File>
+              <FileName>tasks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Middlewares\FreeRTOS-Kernel\tasks.c</FilePath>
+            </File>
+            <File>
+              <FileName>queue.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Middlewares\FreeRTOS-Kernel\queue.c</FilePath>
+            </File>
+            <File>
+              <FileName>list.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Middlewares\FreeRTOS-Kernel\list.c</FilePath>
+            </File>
+            <File>
+              <FileName>port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Middlewares\FreeRTOS-Kernel\portable\RVDS\ARM_CM4F\port.c</FilePath>
             </File>
           </Files>
         </Group>

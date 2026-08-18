@@ -31,7 +31,9 @@
         function setImuNumber(id, value) {
             if (value === undefined) return;
             const number = Number(value);
-            document.getElementById(id).textContent = Number.isFinite(number) ? number.toFixed(3) : "--";
+            document.getElementById(id).textContent = Number.isFinite(number)
+                ? (Number.isInteger(number) ? String(number) : number.toFixed(3))
+                : "--";
         }
 
         function setAttitudeVisualState(state, text) {
@@ -41,7 +43,7 @@
             const statePill = document.getElementById("imuState");
             statePill.classList.toggle("ready", state === "live");
             statePill.textContent = state === "live"
-                ? "实时姿态"
+                ? "原始数据"
                 : (state === "stale" ? "数据超时" : "等待遥测");
         }
 
@@ -189,7 +191,7 @@
         function applyTelemetry(values) {
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
-            /* T 帧提供 AH/AE/AO/AS/AR，合并后立即更新角度控制可视化。 */
+            /* 旧页面仍能接收 AH/AE/AO/AS/AR；当前 F407 固件通常不发送这些角度字段。 */
             setAngleRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
             if (values.SENS !== undefined) setSensorBits(values.SENS);
@@ -203,19 +205,34 @@
         }
 
         function applyImu(values) {
-            const attitude = [values.ROLL, values.PITCH, values.YAW].map(Number);
-            if (!attitude.every(Number.isFinite)) return;
+            const accel = [values.ACCEL_X, values.ACCEL_Y, values.ACCEL_Z].map(Number);
+            const gyro = [values.GYRO_X, values.GYRO_Y, values.GYRO_Z].map(Number);
+            if (!accel.every(Number.isFinite) || !gyro.every(Number.isFinite)) return;
 
-            setImuNumber("imuRoll", values.ROLL);
-            setImuNumber("imuPitch", values.PITCH);
-            setImuNumber("imuYaw", values.YAW);
-            updateAttitudeVisualization(values);
+            setImuNumber("imuRoll", values.ACCEL_X);
+            setImuNumber("imuPitch", values.ACCEL_Y);
+            setImuNumber("imuYaw", values.ACCEL_Z);
+            setImuNumber("imuGyroX", values.GYRO_X);
+            setImuNumber("imuGyroY", values.GYRO_Y);
+            setImuNumber("imuGyroZ", values.GYRO_Z);
+            setImuNumber("imuTemperature", values.TEMPERATURE);
+            const now = Date.now();
+            if (lastAttitudeAt) {
+                const instantRate = 1000 / Math.max(1, now - lastAttitudeAt);
+                attitudeRateHz = attitudeRateHz
+                    ? attitudeRateHz * 0.7 + instantRate * 0.3
+                    : instantRate;
+                elements.attitudeRate.textContent = attitudeRateHz.toFixed(1) + " Hz";
+            }
+            lastAttitudeAt = now;
+            attitudeHasData = true;
+            setAttitudeVisualState("live", "原始 IMU 数据");
         }
 
         function applyState(values) {
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
-            /* S 帧补充目标、零位、配置和状态；不使用 I 帧覆盖这些车端值。 */
+            /* S 帧只同步运行快照；配置同步以独立 CFG 帧为准。 */
             setAngleRuntime(values);
             setTrackingRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
@@ -236,6 +253,14 @@
             setInputValue("speedInput", values.SPEED);
             if (values.SPEED !== undefined) setBaseSpeed(values.SPEED, true);
             setInputValue("limitInput", values.LIMIT);
+            applyWheelAndSyncTelemetry(values);
+        }
+
+        function applyConfig(values) {
+            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            if (values.ENC_SYNC_ENABLED !== undefined) {
+                setEncoderSyncState(values.ENC_SYNC_ENABLED, values.ENC_SYNC_ACTIVE ?? encoderSyncActive);
+            }
             setInputValue("encoderKpInput", values.ENC_KP);
             setInputValue("encoderKiInput", values.ENC_KI);
             setInputValue("encoderFullScaleInput", values.ENC_FULL_SCALE);
@@ -246,21 +271,25 @@
             for (let channel = 1; channel <= 8; channel += 1) {
                 setInputValue("weight" + channel, values["W" + channel]);
             }
-            applyWheelAndSyncTelemetry(values);
             if (typeof markDeviceConfigurationSynchronized === "function") markDeviceConfigurationSynchronized();
         }
 
         function processLine(rawLine) {
             const line = rawLine.trim();
             if (!line) return;
-            appendLog("RX", line, "rx");
 
             const firstSpace = line.indexOf(" ");
             const prefix = (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase();
             const payload = firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim();
+            const responseValues = (prefix === "OK" || prefix === "ERR") ? parseKeyValues(payload) : {};
+            const responseCommand = responseValues.CMD ?? responseValues.C;
+            const silentHeartbeatResponse =
+                ["PING", "HEARTBEAT"].includes(String(responseCommand ?? "").toUpperCase());
+
+            if (!silentHeartbeatResponse) appendLog("RX", line, "rx");
 
             if (prefix === "T" || prefix === "TEL") {
-                /* 固件周期帧中的角度短字段：AH 航向、AE 误差、AO 输出、AS 状态、AR 就绪。 */
+                /* 兼容旧角度短字段：AH 航向、AE 误差、AO 输出、AS 状态、AR 就绪。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
                     EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
@@ -271,14 +300,14 @@
             }
             if (prefix === "I" || prefix === "IMU") {
                 const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "ROLL", P: "PITCH", Y: "YAW"
+                    AX: "ACCEL_X", AY: "ACCEL_Y", AZ: "ACCEL_Z", GX: "GYRO_X", GY: "GYRO_Y", GZ: "GYRO_Z", TEMP: "TEMPERATURE"
                 });
                 applyImu(values);
                 publishPidChartValues("imu", values);
                 return;
             }
             if (prefix === "S" || prefix === "STATE") {
-                /* 状态帧同时携带可调配置和只读零位/状态，统一扩展为语义名称。 */
+                /* 状态帧更新运行快照；配置字段由 CFG 处理。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", EC: "ENCODER_CLOSED",
                     AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE",
@@ -287,22 +316,31 @@
                 });
                 applyState(values);
                 publishPidChartValues("state", values);
-                /* 兼容仅返回 S/STATE、尚未升级显式 OK 回执的固件。 */
+                return;
+            }
+            if (prefix === "CFG" || prefix === "CONFIG") {
+                const values = expandKeyAliases(parseKeyValues(payload), {
+                    EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT",
+                    ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT",
+                    WDT: "WATCHDOG_TIMEOUT_MS", BLV: "BATTERY_LOW_MV"
+                });
+                applyConfig(values);
+                publishPidChartValues("state", values);
                 const pendingGet = pendingCommands.find(item => item.expectedName === "GET");
-                if (pendingGet) settleCommandTransaction(pendingGet, true, "已收到状态数据");
+                if (pendingGet) settleCommandTransaction(pendingGet, true, "已收到配置数据");
                 return;
             }
             if (prefix === "OK") {
-                const values = parseKeyValues(payload);
-                if (!settlePendingCommand(true, line, values.CMD ?? values.C)) {
+                if (silentHeartbeatResponse) return;
+                if (!settlePendingCommand(true, line, responseCommand)) {
                     elements.response.className = "response ok";
                     elements.response.textContent = line;
                 }
                 return;
             }
             if (prefix === "ERR") {
-                const values = parseKeyValues(payload);
-                if (!settlePendingCommand(false, line, values.CMD ?? values.M)) {
+                if (silentHeartbeatResponse) return;
+                if (!settlePendingCommand(false, line, responseCommand)) {
                     elements.response.className = "response error";
                     elements.response.textContent = line;
                 }

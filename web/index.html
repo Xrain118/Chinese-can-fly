@@ -135,12 +135,12 @@
                         </div>
                         <div class="mode-switch">
                         <div class="mode-switch-actions" role="group" aria-label="运行模式切换">
-                            <button id="trackingModeButton" class="secondary active" type="button" aria-pressed="true">循迹</button>
+                            <button id="trackingModeButton" class="secondary active" type="button" aria-pressed="true">直接</button>
                             <button id="straightModeButton" class="secondary" type="button" aria-pressed="false">直行</button>
-                            <button id="angleModeButton" class="secondary" type="button" aria-pressed="false">角度</button>
+                            <button id="angleModeButton" class="secondary" type="button" aria-pressed="false">角度占位</button>
                         </div>
                         </div>
-                        <p id="modeDescription" class="control-step-copy">循迹模式：SPEED 决定中间速度，位置 PID 只在左右轮之间增加差速。</p>
+                        <p id="modeDescription" class="control-step-copy">直接模式：PWM/MOVE 直接给出左右轮目标，SPEED 只在直行模式下分配。</p>
                     </div>
 
                     <div class="control-step primary-source">
@@ -217,7 +217,7 @@
             <div class="card-body">
                 <div class="control-chain" aria-label="速度控制链">
                     <div class="control-chain-node source"><span>① 基础速度来源</span><strong id="chainSpeedValue">SPEED 400 / 1000</strong><small>唯一由你直接设置的速度指令</small></div>
-                    <div class="control-chain-node"><span>② 模式分配</span><strong id="controlStrategy">循迹 PID 产生左右差速</strong><small>直行同速；循迹差速；角度模式原地反向轮速</small></div>
+                    <div class="control-chain-node"><span>② 模式分配</span><strong id="controlStrategy">直接 PWM</strong><small>直接左右 PWM；直行同速；角度模式未接入</small></div>
                     <div class="control-chain-node"><span>③ 换算目标轮速</span><strong id="chainTargetValue">L 0 / R 0 CPS</strong><small>由 SPEED、模式和满量程 CPS 自动计算</small></div>
                     <div class="control-chain-node"><span>④ 执行器</span><strong id="chainExecutionValue">直接 PWM</strong><small>默认直接输出 PWM；可选编码器 PI 修正</small></div>
                     <div class="control-chain-node"><span>⑤ 实际结果</span><strong id="chainActualValue">CPS L 0 / R 0</strong><small id="chainPwmValue">PWM L 0 / R 0</small></div>
@@ -257,8 +257,8 @@
             -->
             <section class="card">
                 <div class="card-head">
-                    <div><h2>航向角 PID</h2><div class="hint">以车端零位为基准，顺时针/向右为正方向</div></div>
-                    <span id="anglePidScope" class="scope-badge">角度模式生效</span>
+                    <div><h2>航向角 PID（未接入）</h2><div class="hint">当前 F407 固件不接收 ANGLE 命令</div></div>
+                    <span id="anglePidScope" class="scope-badge">占位</span>
                 </div>
                 <div class="card-body">
                     <div class="context-note">角度模式原地旋转：0° 前、90° 右、180° 后、270° 左。当前：<strong id="angleRuntimeSummary">等待车端角度状态</strong></div>
@@ -340,7 +340,7 @@
 
             <section class="card weights-card">
                 <div class="card-head">
-                    <div><h2>八路循迹传感器权重</h2><div class="hint">对应 −70 … +70 mm（20 mm 间距），CH1 最左，CH8 最右</div></div>
+                    <div><h2>八路循迹传感器权重（未接入）</h2><div class="hint">当前 F407 四驱固件不接收 WEIGHT/WEIGHTS 命令</div></div>
                     <div class="card-head-actions">
                         <span id="trackingWeightsScope" class="scope-badge active">循迹模式生效</span>
                         <button id="sendAllWeightsButton" class="small" type="button">一次发送 8 路</button>
@@ -366,8 +366,8 @@
         <section class="card imu-card">
             <div class="card-head">
                 <div>
-                    <h2>IMU 实时姿态</h2>
-                    <div class="hint">串口仅接收 Roll、Pitch、Yaw；可拖动模型改变观察视角</div>
+                    <h2>IMU 原始数据</h2>
+                    <div class="hint">串口接收 AX、AY、AZ、GX、GY、GZ、TEMP 原始值；当前固件不输出姿态角</div>
                 </div>
                 <div id="imuState" class="imu-state-pill">等待遥测</div>
             </div>
@@ -423,14 +423,17 @@
                     </div>
 
                     <div class="imu-group attitude-readout">
-                        <div class="imu-group-title"><strong>实时姿态</strong><span>degree</span></div>
+                        <div class="imu-group-title"><strong>加速度原始值</strong><span>raw</span></div>
                         <div class="attitude-angle-grid">
-                            <div class="attitude-angle"><span>Roll 横滚</span><strong><span id="imuRoll">--</span><small>°</small></strong></div>
-                            <div class="attitude-angle"><span>Pitch 俯仰</span><strong><span id="imuPitch">--</span><small>°</small></strong></div>
-                            <div class="attitude-angle"><span>Yaw 偏航</span><strong><span id="imuYaw">--</span><small>°</small></strong></div>
+                            <div class="attitude-angle"><span>AX</span><strong><span id="imuRoll">--</span><small>LSB</small></strong></div>
+                            <div class="attitude-angle"><span>AY</span><strong><span id="imuPitch">--</span><small>LSB</small></strong></div>
+                            <div class="attitude-angle"><span>AZ</span><strong><span id="imuYaw">--</span><small>LSB</small></strong></div>
                         </div>
                         <div class="attitude-meta">
-                            <div class="imu-diagnostic"><span>模型参考</span><strong id="attitudeReference">绝对姿态</strong></div>
+                            <div class="imu-diagnostic"><span>GX</span><strong id="imuGyroX">--</strong></div>
+                            <div class="imu-diagnostic"><span>GY</span><strong id="imuGyroY">--</strong></div>
+                            <div class="imu-diagnostic"><span>GZ</span><strong id="imuGyroZ">--</strong></div>
+                            <div class="imu-diagnostic"><span>TEMP</span><strong id="imuTemperature">--</strong></div>
                             <div class="imu-diagnostic"><span>刷新频率</span><strong id="attitudeRate">--</strong></div>
                         </div>
                         <div class="attitude-actions">
@@ -443,7 +446,7 @@
 
                     <!--
                         俯视方位图使用 MCU 返回的 AH/AE/AO/AS，不在浏览器中自行计算控制角。
-                        原始 I 帧 Yaw 只保留在“当前原始 Yaw”读数中，便于核对传感器方向。
+                        当前固件只输出原始 IMU，不输出姿态角；方位控制面板保留为旧页面兼容区。
                     -->
                     <div class="vehicle-yaw-panel">
                     <div id="vehicleYawStage" class="vehicle-yaw-stage" role="img" aria-label="等待第一帧有效 Yaw 数据以建立小车初始方向">

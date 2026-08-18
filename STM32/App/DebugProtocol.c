@@ -1,10 +1,24 @@
 #include "DebugProtocol.h"
 #include "DriveControl.h"
+#include "PowerMonitor.h"
+#include "ProtocolTx.h"
+#include "Safety.h"
 #include "Serial.h"
+#include "UgvCommandQueue.h"
+#include <stdarg.h>
+#include <stdio.h>
 
 #define DEBUG_PROTOCOL_LINE_SIZE (128U)
-#define DEBUG_PROTOCOL_MAX_TOKENS (12U)
+#define DEBUG_PROTOCOL_MAX_TOKENS (8U)
 
+typedef struct
+{
+	char text[PROTOCOL_TX_LINE_SIZE];
+	uint16_t length;
+	uint8_t truncated;
+} DebugProtocol_LineBuilder;
+
+/* 接收端只缓存一行 ASCII 文本；逗号、等号会统一归一化为空格便于复用命令解析。 */
 static char g_line[DEBUG_PROTOCOL_LINE_SIZE];
 static uint8_t g_lineLength;
 static uint8_t g_lineOverflow;
@@ -21,6 +35,26 @@ static uint8_t DebugProtocol_StringEqual(const char *left, const char *right)
 		right++;
 	}
 	return ((*left == '\0') && (*right == '\0')) ? 1U : 0U;
+}
+
+static void DebugProtocol_CopyCommandName(char *target, uint8_t targetSize,
+										  const char *source)
+{
+	uint8_t index = 0U;
+
+	if ((target == 0) || (targetSize == 0U))
+	{
+		return;
+	}
+	if (source != 0)
+	{
+		while ((source[index] != '\0') && (index < (uint8_t)(targetSize - 1U)))
+		{
+			target[index] = source[index];
+			index++;
+		}
+	}
+	target[index] = '\0';
 }
 
 static void DebugProtocol_NormalizeLine(void)
@@ -74,7 +108,9 @@ static uint8_t DebugProtocol_Tokenize(char *tokens[], uint8_t maxTokens)
 
 static uint8_t DebugProtocol_ParseInt(const char *text, int32_t *value)
 {
-	int32_t result = 0;
+	uint32_t result = 0U;
+	uint32_t limit;
+	uint32_t digit;
 	uint8_t negative = 0U;
 	uint8_t hasDigit = 0U;
 	if ((text == 0) || (value == 0))
@@ -86,17 +122,30 @@ static uint8_t DebugProtocol_ParseInt(const char *text, int32_t *value)
 		negative = (*text == '-') ? 1U : 0U;
 		text++;
 	}
+	limit = (negative != 0U) ? 2147483648UL : 2147483647UL;
 	while ((*text >= '0') && (*text <= '9'))
 	{
 		hasDigit = 1U;
-		result = result * 10 + (int32_t)(*text - '0');
+		digit = (uint32_t)(*text - '0');
+		if (result > ((limit - digit) / 10UL))
+		{
+			return 0U;
+		}
+		result = result * 10UL + digit;
 		text++;
 	}
 	if ((hasDigit == 0U) || (*text != '\0'))
 	{
 		return 0U;
 	}
-	*value = (negative != 0U) ? -result : result;
+	if (negative != 0U)
+	{
+		*value = (result == 2147483648UL) ? (int32_t)0x80000000UL : -(int32_t)result;
+	}
+	else
+	{
+		*value = (int32_t)result;
+	}
 	return 1U;
 }
 
@@ -140,14 +189,47 @@ static uint8_t DebugProtocol_ParseFloat(const char *text, float *value)
 	return 1U;
 }
 
-static void DebugProtocol_SendFixed6(float value)
+static void DebugProtocol_LineInit(DebugProtocol_LineBuilder *builder)
+{
+	builder->length = 0U;
+	builder->truncated = 0U;
+	builder->text[0] = '\0';
+}
+
+static void DebugProtocol_LineAppend(DebugProtocol_LineBuilder *builder,
+									 const char *format, ...)
+{
+	va_list args;
+	int written;
+	uint16_t remaining;
+
+	if ((builder == 0) || (format == 0) || (builder->truncated != 0U))
+	{
+		return;
+	}
+	remaining = (uint16_t)(sizeof(builder->text) - builder->length);
+	va_start(args, format);
+	written = vsnprintf(&builder->text[builder->length], remaining, format, args);
+	va_end(args);
+	if ((written < 0) || ((uint32_t)written >= remaining))
+	{
+		/* 状态帧超长时整帧丢弃，避免发送缺少 CRLF 的半行。 */
+		builder->truncated = 1U;
+		builder->text[sizeof(builder->text) - 1U] = '\0';
+		return;
+	}
+	builder->length = (uint16_t)(builder->length + (uint16_t)written);
+}
+
+static void DebugProtocol_LineAppendFixed6(DebugProtocol_LineBuilder *builder,
+										  float value)
 {
 	int32_t integerPart;
 	int32_t fractionalPart;
 
 	if (value < 0.0f)
 	{
-		Serial_SendString("-");
+		DebugProtocol_LineAppend(builder, "-");
 		value = -value;
 	}
 	integerPart = (int32_t)value;
@@ -157,166 +239,324 @@ static void DebugProtocol_SendFixed6(float value)
 		integerPart++;
 		fractionalPart -= 1000000;
 	}
-	Serial_Printf("%ld.%06ld", (long)integerPart, (long)fractionalPart);
+	DebugProtocol_LineAppend(builder, "%ld.%06ld",
+							 (long)integerPart, (long)fractionalPart);
 }
 
-static void DebugProtocol_SendOk(const char *command)
+static void DebugProtocol_LineSend(DebugProtocol_LineBuilder *builder)
 {
-	Serial_Printf("OK C=%s\r\n", (char *)command);
+	if ((builder == 0) || (builder->truncated != 0U))
+	{
+		return;
+	}
+	(void)ProtocolTx_SendString(builder->text);
 }
 
-static void DebugProtocol_SendErr(const char *command, const char *message)
+void DebugProtocol_SendOk(const char *command)
 {
-	Serial_Printf("ERR C=%s,M=%s\r\n", (char *)command, (char *)message);
+	(void)ProtocolTx_Printf("OK C=%s\r\n", (command == 0) ? "" : command);
 }
 
-void DebugProtocol_SendState(void)
+void DebugProtocol_SendErr(const char *command, const char *message)
 {
-	DriveControl_Snapshot snapshot;
-	char bits[9];
-
-	DriveControl_GetSnapshot(&snapshot);
-	DriveControl_FormatSensorBits(bits);
-
-	Serial_Printf(
-		"S R=%d,M=%d,SP=%d,KP=",
-		snapshot.running,
-		(int)snapshot.mode,
-		snapshot.speed);
-	DebugProtocol_SendFixed6(DriveControl_GetTrackingKp());
-	Serial_SendString(",KI=");
-	DebugProtocol_SendFixed6(DriveControl_GetTrackingKi());
-	Serial_SendString(",KD=");
-	DebugProtocol_SendFixed6(DriveControl_GetTrackingKd());
-	Serial_Printf(
-		",L=%d,W1=%d,W2=%d,W3=%d,W4=%d,W5=%d,W6=%d,W7=%d,W8=%d,EC=%d,EKP=",
-		DriveControl_GetTrackingLimit(),
-		DriveControl_GetWeight(1U),
-		DriveControl_GetWeight(2U),
-		DriveControl_GetWeight(3U),
-		DriveControl_GetWeight(4U),
-		DriveControl_GetWeight(5U),
-		DriveControl_GetWeight(6U),
-		DriveControl_GetWeight(7U),
-		DriveControl_GetWeight(8U),
-		DriveControl_GetEncoderClosed());
-	DebugProtocol_SendFixed6(DriveControl_GetEncoderKp());
-	Serial_SendString(",EKI=");
-	DebugProtocol_SendFixed6(DriveControl_GetEncoderKi());
-	Serial_Printf(
-		",EFS=%ld,ECL=%d,ESE=%d,ESKP=",
-		(long)DriveControl_GetEncoderFullScaleCps(),
-		DriveControl_GetEncoderLimit(),
-		DriveControl_GetEncoderSyncEnabled());
-	DebugProtocol_SendFixed6(DriveControl_GetEncoderSyncKp());
-	Serial_Printf(
-		",EST=%ld,ESL=%d,NB=%d,NS=%d,S=%s,SENS=%s,E=%d,PL=%d,PR=%d,",
-		(long)DriveControl_GetEncoderSyncToleranceCps(),
-		DriveControl_GetEncoderSyncLimit(),
-		snapshot.speed,
-		snapshot.trackingState,
-		bits,
-		bits,
-		snapshot.trackingError,
-		snapshot.appliedLeftPwm,
-		snapshot.appliedRightPwm);
-	Serial_Printf(
-		"EL=%ld,ER=%ld,TL=%ld,TR=%ld,",
-		(long)snapshot.leftMeasuredCps,
-		(long)snapshot.rightMeasuredCps,
-		(long)snapshot.leftTargetCps,
-		(long)snapshot.rightTargetCps);
-	Serial_Printf(
-		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d,AR=0,AS=0\r\n",
-		(long)snapshot.leftFrontCps,
-		(long)snapshot.leftRearCps,
-		(long)snapshot.rightFrontCps,
-		(long)snapshot.rightRearCps,
-		(long)snapshot.encoderSyncError,
-		snapshot.encoderSyncCorrection,
-		snapshot.encoderSyncActive);
+	(void)ProtocolTx_Printf("ERR C=%s,M=%s\r\n",
+							(command == 0) ? "" : command,
+							(message == 0) ? "" : message);
 }
 
-void DebugProtocol_SendTelemetry(void)
+static void DebugProtocol_SendDriveLine(const char *prefix)
 {
 	DriveControl_Snapshot snapshot;
-	char bits[9];
+	Safety_Snapshot safety;
+	DebugProtocol_LineBuilder line;
 
 	DriveControl_GetSnapshot(&snapshot);
-	DriveControl_FormatSensorBits(bits);
-
-	Serial_Printf(
-		"T R=%d,M=%d,S=%s,E=%d,NB=%d,NS=%d,PL=%d,PR=%d,",
+	Safety_GetSnapshot(&safety);
+	DebugProtocol_LineInit(&line);
+	/* T/S 共享运行快照字段；配置参数放到独立 CFG 帧，方便前端区分同步完成点。 */
+	DebugProtocol_LineAppend(
+		&line,
+		"%s R=%d,M=%d,SP=%d,DL=%d,DR=%d,PL=%d,PR=%d,"
+		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,"
+		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d,"
+		"F=%lu,BV=%lu,ES=%d,IMU=%d,WD=%lu\r\n",
+		(char *)prefix,
 		snapshot.running,
 		(int)snapshot.mode,
-		bits,
-		snapshot.trackingError,
 		snapshot.speed,
-		snapshot.trackingState,
+		snapshot.desiredLeftPwm,
+		snapshot.desiredRightPwm,
 		snapshot.appliedLeftPwm,
-		snapshot.appliedRightPwm);
-	Serial_Printf(
-		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,",
+		snapshot.appliedRightPwm,
 		(long)snapshot.leftMeasuredCps,
 		(long)snapshot.rightMeasuredCps,
 		snapshot.encoderClosed,
 		(long)snapshot.leftTargetCps,
-		(long)snapshot.rightTargetCps);
-	Serial_Printf(
-		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d\r\n",
+		(long)snapshot.rightTargetCps,
 		(long)snapshot.leftFrontCps,
 		(long)snapshot.leftRearCps,
 		(long)snapshot.rightFrontCps,
 		(long)snapshot.rightRearCps,
 		(long)snapshot.encoderSyncError,
 		snapshot.encoderSyncCorrection,
-		snapshot.encoderSyncActive);
+		snapshot.encoderSyncActive,
+		(unsigned long)safety.faultFlags,
+		(unsigned long)safety.batteryMv,
+		safety.emergencyStopActive,
+		safety.imuHealthy,
+		(unsigned long)safety.watchdogAgeMs);
+	DebugProtocol_LineSend(&line);
 }
 
-static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
+void DebugProtocol_SendState(void)
 {
+	DebugProtocol_LineBuilder line;
+
+	DebugProtocol_SendDriveLine("S");
+	DebugProtocol_LineInit(&line);
+	/* GET ALL 返回 S + CFG 两行；前端收到 CFG 后才认为配置已同步。 */
+	DebugProtocol_LineAppend(&line, "CFG EC=%d,EKP=",
+							 DriveControl_GetEncoderClosed());
+	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderKp());
+	DebugProtocol_LineAppend(&line, ",EKI=");
+	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderKi());
+	DebugProtocol_LineAppend(&line, ",EFS=%ld,ECL=%d,ESE=%d,ESKP=",
+							 (long)DriveControl_GetEncoderFullScaleCps(),
+							 DriveControl_GetEncoderLimit(),
+							 DriveControl_GetEncoderSyncEnabled());
+	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderSyncKp());
+	DebugProtocol_LineAppend(&line, ",EST=%ld,ESL=%d,WDT=%lu,BLV=%lu\r\n",
+							 (long)DriveControl_GetEncoderSyncToleranceCps(),
+							 DriveControl_GetEncoderSyncLimit(),
+							 (unsigned long)SAFETY_COMM_TIMEOUT_MS,
+							 (unsigned long)POWER_BATTERY_LOW_MV);
+	DebugProtocol_LineSend(&line);
+}
+
+void DebugProtocol_SendTelemetry(void)
+{
+	DebugProtocol_SendDriveLine("T");
+}
+
+void DebugProtocol_SendImuRaw(const ICM42688_RawSample *sample)
+{
+	if (sample == 0)
+	{
+		return;
+	}
+	(void)ProtocolTx_Printf(
+		"I AX=%d,AY=%d,AZ=%d,GX=%d,GY=%d,GZ=%d,TEMP=%d\r\n",
+		sample->accelX,
+		sample->accelY,
+		sample->accelZ,
+		sample->gyroX,
+		sample->gyroY,
+		sample->gyroZ,
+		sample->temperature);
+}
+
+static void DebugProtocol_SubmitCommand(const UgvCommand *command)
+{
+	if (UgvCommandQueue_Send(command) == 0U)
+	{
+		/* 队列满说明控制任务暂时跟不上，直接拒绝本条命令而不是阻塞协议任务。 */
+		DebugProtocol_SendErr(command->responseName, "BUSY");
+	}
+}
+
+static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
+{
+	UgvCommand command =
+	{
+		UGV_COMMAND_START,
+		{0},
+		0,
+		0,
+		0,
+		0.0f,
+		0.0f,
+		0U
+	};
 	int32_t ivalue;
 	int32_t syncTolerance;
 	int32_t syncLimit;
 	float kp;
 	float ki;
-	float kd;
-	int16_t weights[DRIVE_CONTROL_SENSOR_COUNT];
-	uint8_t index;
+
+	if (count < 2U)
+	{
+		DebugProtocol_SendErr("ENC", "ARG");
+		return;
+	}
+	DebugProtocol_CopyCommandName(command.responseName, sizeof(command.responseName), "ENC");
+	if (DebugProtocol_StringEqual(tokens[1], "ON") != 0U)
+	{
+		command.type = UGV_COMMAND_ENCODER_ENABLE;
+		command.enabled = 1U;
+		DebugProtocol_SubmitCommand(&command);
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "OFF") != 0U)
+	{
+		command.type = UGV_COMMAND_ENCODER_ENABLE;
+		command.enabled = 0U;
+		DebugProtocol_SubmitCommand(&command);
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "PID") != 0U)
+	{
+		if ((count < 4U) ||
+			(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
+			(DebugProtocol_ParseFloat(tokens[3], &ki) == 0U))
+		{
+			DebugProtocol_SendErr("ENC", "ARG");
+		}
+		else
+		{
+			command.type = UGV_COMMAND_ENCODER_GAINS;
+			command.kp = kp;
+			command.ki = ki;
+			DebugProtocol_SubmitCommand(&command);
+		}
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "CPS") != 0U)
+	{
+		if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U))
+		{
+			DebugProtocol_SendErr("ENC", "ARG");
+		}
+		else
+		{
+			command.type = UGV_COMMAND_ENCODER_FULL_SCALE;
+			command.first = ivalue;
+			DebugProtocol_SubmitCommand(&command);
+		}
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "LIMIT") != 0U)
+	{
+		if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U) ||
+			(ivalue < 0) || (ivalue > DRIVE_CONTROL_PWM_MAX))
+		{
+			DebugProtocol_SendErr("ENC", "ARG");
+		}
+		else
+		{
+			command.type = UGV_COMMAND_ENCODER_LIMIT;
+			command.first = ivalue;
+			DebugProtocol_SubmitCommand(&command);
+		}
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "SYNC") != 0U)
+	{
+		if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "ON") != 0U))
+		{
+			command.type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
+			command.enabled = 1U;
+			DebugProtocol_SubmitCommand(&command);
+			return;
+		}
+		if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "OFF") != 0U))
+		{
+			command.type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
+			command.enabled = 0U;
+			DebugProtocol_SubmitCommand(&command);
+			return;
+		}
+		if ((count < 5U) ||
+			(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
+			(DebugProtocol_ParseInt(tokens[3], &syncTolerance) == 0U) ||
+			(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
+			(syncLimit < 0) || (syncLimit > DRIVE_CONTROL_PWM_MAX))
+		{
+			DebugProtocol_SendErr("ENC", "ARG");
+		}
+		else
+		{
+			command.type = UGV_COMMAND_ENCODER_SYNC_PARAMS;
+			command.kp = kp;
+			command.first = syncTolerance;
+			command.second = syncLimit;
+			DebugProtocol_SubmitCommand(&command);
+		}
+		return;
+	}
+	DebugProtocol_SendErr("ENC", "ARG");
+}
+
+static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
+{
+	UgvCommand command =
+	{
+		UGV_COMMAND_START,
+		{0},
+		0,
+		0,
+		0,
+		0.0f,
+		0.0f,
+		0U
+	};
+	int32_t left;
+	int32_t right;
+	int32_t ivalue;
 
 	if (count == 0U)
 	{
 		return;
 	}
+	DebugProtocol_CopyCommandName(command.responseName,
+								  sizeof(command.responseName),
+								  tokens[0]);
 
 	if (DebugProtocol_StringEqual(tokens[0], "START") != 0U)
 	{
-		DriveControl_Start();
-		DebugProtocol_SendOk("START");
+		command.type = UGV_COMMAND_START;
+		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "STOP") != 0U)
 	{
-		DriveControl_Stop();
-		DebugProtocol_SendOk("STOP");
+		command.type = UGV_COMMAND_STOP;
+		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "RESET") != 0U)
 	{
-		DriveControl_Reset();
-		DebugProtocol_SendOk("RESET");
+		command.type = UGV_COMMAND_RESET;
+		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "DEFAULTS") != 0U)
 	{
-		DriveControl_LoadDefaults();
-		DebugProtocol_SendOk("DEFAULTS");
+		command.type = UGV_COMMAND_DEFAULTS;
+		DebugProtocol_SubmitCommand(&command);
+		return;
+	}
+	if ((DebugProtocol_StringEqual(tokens[0], "HEARTBEAT") != 0U) ||
+		(DebugProtocol_StringEqual(tokens[0], "PING") != 0U))
+	{
+		command.type = UGV_COMMAND_PING;
+		DebugProtocol_SubmitCommand(&command);
+		return;
+	}
+	if ((DebugProtocol_StringEqual(tokens[0], "FAULT") != 0U) &&
+		(count >= 2U) && (DebugProtocol_StringEqual(tokens[1], "CLEAR") != 0U))
+	{
+		command.type = UGV_COMMAND_FAULT_CLEAR;
+		DebugProtocol_CopyCommandName(command.responseName,
+									  sizeof(command.responseName),
+									  "FAULT");
+		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if ((DebugProtocol_StringEqual(tokens[0], "GET") != 0U) &&
 		(count >= 2U) && (DebugProtocol_StringEqual(tokens[1], "ALL") != 0U))
 	{
-		DebugProtocol_SendState();
+		command.type = UGV_COMMAND_GET_ALL;
+		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "MODE") != 0U)
@@ -325,19 +565,22 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 		{
 			DebugProtocol_SendErr("MODE", "ARG");
 		}
-		else if (DebugProtocol_StringEqual(tokens[1], "TRACK") != 0U)
+		else if (DebugProtocol_StringEqual(tokens[1], "DIRECT") != 0U)
 		{
-			(void)DriveControl_SetMode(DRIVE_MODE_TRACK);
-			DebugProtocol_SendOk("MODE");
+			command.type = UGV_COMMAND_MODE;
+			command.first = DRIVE_MODE_DIRECT;
+			DebugProtocol_SubmitCommand(&command);
 		}
 		else if (DebugProtocol_StringEqual(tokens[1], "STRAIGHT") != 0U)
 		{
-			(void)DriveControl_SetMode(DRIVE_MODE_STRAIGHT);
-			DebugProtocol_SendOk("MODE");
+			command.type = UGV_COMMAND_MODE;
+			command.first = DRIVE_MODE_STRAIGHT;
+			DebugProtocol_SubmitCommand(&command);
 		}
-		else if (DebugProtocol_StringEqual(tokens[1], "ANGLE") != 0U)
+		else if (DebugProtocol_StringEqual(tokens[1], "TRACK") != 0U)
 		{
-			DebugProtocol_SendErr("MODE", "ANGLE_NOT_SUPPORTED");
+			/* 保留旧协议的明确错误码，避免上位机把 TRACK 当作普通参数错误。 */
+			DebugProtocol_SendErr("MODE", "TRACK_REMOVED");
 		}
 		else
 		{
@@ -345,186 +588,44 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 		}
 		return;
 	}
-	if (DebugProtocol_StringEqual(tokens[0], "ANGLE") != 0U)
+	if ((DebugProtocol_StringEqual(tokens[0], "PWM") != 0U) ||
+		(DebugProtocol_StringEqual(tokens[0], "MOVE") != 0U))
 	{
-		DebugProtocol_SendErr("ANGLE", "NOT_SUPPORTED");
+		if ((count < 3U) ||
+			(DebugProtocol_ParseInt(tokens[1], &left) == 0U) ||
+			(DebugProtocol_ParseInt(tokens[2], &right) == 0U) ||
+			(left < -DRIVE_CONTROL_PWM_MAX) || (left > DRIVE_CONTROL_PWM_MAX) ||
+			(right < -DRIVE_CONTROL_PWM_MAX) || (right > DRIVE_CONTROL_PWM_MAX))
+		{
+			DebugProtocol_SendErr(tokens[0], "ARG");
+		}
+		else
+		{
+			command.type = UGV_COMMAND_WHEEL_PWM;
+			command.first = left;
+			command.second = right;
+			DebugProtocol_SubmitCommand(&command);
+		}
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "SPEED") != 0U)
 	{
 		if ((count < 2U) || (DebugProtocol_ParseInt(tokens[1], &ivalue) == 0U) ||
-			(DriveControl_SetSpeed((int16_t)ivalue) == 0U))
+			(ivalue < -DRIVE_CONTROL_PWM_MAX) || (ivalue > DRIVE_CONTROL_PWM_MAX))
 		{
 			DebugProtocol_SendErr("SPEED", "ARG");
 		}
 		else
 		{
-			DebugProtocol_SendOk("SPEED");
-		}
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "PID") != 0U)
-	{
-		if ((count < 4U) ||
-			(DebugProtocol_ParseFloat(tokens[1], &kp) == 0U) ||
-			(DebugProtocol_ParseFloat(tokens[2], &ki) == 0U) ||
-			(DebugProtocol_ParseFloat(tokens[3], &kd) == 0U) ||
-			(DriveControl_SetTrackingGains(kp, ki, kd) == 0U))
-		{
-			DebugProtocol_SendErr("PID", "ARG");
-		}
-		else
-		{
-			DebugProtocol_SendOk("PID");
-		}
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "LIMIT") != 0U)
-	{
-		if ((count < 2U) || (DebugProtocol_ParseInt(tokens[1], &ivalue) == 0U) ||
-			(DriveControl_SetTrackingLimit((int16_t)ivalue) == 0U))
-		{
-			DebugProtocol_SendErr("LIMIT", "ARG");
-		}
-		else
-		{
-			DebugProtocol_SendOk("LIMIT");
-		}
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "WEIGHT") != 0U)
-	{
-		int32_t channel;
-		int32_t weight;
-		if ((count < 3U) ||
-			(DebugProtocol_ParseInt(tokens[1], &channel) == 0U) ||
-			(DebugProtocol_ParseInt(tokens[2], &weight) == 0U) ||
-			(DriveControl_SetWeight((uint8_t)channel, (int16_t)weight) == 0U))
-		{
-			DebugProtocol_SendErr("WEIGHT", "ARG");
-		}
-		else
-		{
-			DebugProtocol_SendOk("WEIGHT");
-		}
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "WEIGHTS") != 0U)
-	{
-		if (count < 9U)
-		{
-			DebugProtocol_SendErr("WEIGHTS", "ARG");
-			return;
-		}
-		for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-		{
-			if (DebugProtocol_ParseInt(tokens[index + 1U], &ivalue) == 0U)
-			{
-				DebugProtocol_SendErr("WEIGHTS", "ARG");
-				return;
-			}
-			weights[index] = (int16_t)ivalue;
-		}
-		if (DriveControl_SetWeights(weights) == 0U)
-		{
-			DebugProtocol_SendErr("WEIGHTS", "ARG");
-		}
-		else
-		{
-			DebugProtocol_SendOk("WEIGHTS");
+			command.type = UGV_COMMAND_SPEED;
+			command.first = ivalue;
+			DebugProtocol_SubmitCommand(&command);
 		}
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "ENC") != 0U)
 	{
-		if (count < 2U)
-		{
-			DebugProtocol_SendErr("ENC", "ARG");
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "ON") != 0U)
-		{
-			DriveControl_SetEncoderClosed(1U);
-			DebugProtocol_SendOk("ENC");
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "OFF") != 0U)
-		{
-			DriveControl_SetEncoderClosed(0U);
-			DebugProtocol_SendOk("ENC");
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "PID") != 0U)
-		{
-			if ((count < 4U) ||
-				(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
-				(DebugProtocol_ParseFloat(tokens[3], &ki) == 0U) ||
-				(DriveControl_SetEncoderGains(kp, ki) == 0U))
-			{
-				DebugProtocol_SendErr("ENC", "ARG");
-			}
-			else
-			{
-				DebugProtocol_SendOk("ENC");
-			}
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "CPS") != 0U)
-		{
-			if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U) ||
-				(DriveControl_SetEncoderFullScaleCps(ivalue) == 0U))
-			{
-				DebugProtocol_SendErr("ENC", "ARG");
-			}
-			else
-			{
-				DebugProtocol_SendOk("ENC");
-			}
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "LIMIT") != 0U)
-		{
-			if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U) ||
-				(DriveControl_SetEncoderLimit((int16_t)ivalue) == 0U))
-			{
-				DebugProtocol_SendErr("ENC", "ARG");
-			}
-			else
-			{
-				DebugProtocol_SendOk("ENC");
-			}
-			return;
-		}
-		if (DebugProtocol_StringEqual(tokens[1], "SYNC") != 0U)
-		{
-			if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "ON") != 0U))
-			{
-				DriveControl_SetEncoderSyncEnabled(1U);
-				DebugProtocol_SendOk("ENC");
-				return;
-			}
-			if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "OFF") != 0U))
-			{
-				DriveControl_SetEncoderSyncEnabled(0U);
-				DebugProtocol_SendOk("ENC");
-				return;
-			}
-			if ((count < 5U) ||
-				(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
-				(DebugProtocol_ParseInt(tokens[3], &syncTolerance) == 0U) ||
-				(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
-				(syncLimit > DRIVE_CONTROL_PWM_MAX) ||
-				(DriveControl_SetEncoderSync(kp, syncTolerance, (int16_t)syncLimit) == 0U))
-			{
-				DebugProtocol_SendErr("ENC", "ARG");
-			}
-			else
-			{
-				DebugProtocol_SendOk("ENC");
-			}
-			return;
-		}
-		DebugProtocol_SendErr("ENC", "ARG");
+		DebugProtocol_ProcessEncoderCommand(tokens, count);
 		return;
 	}
 

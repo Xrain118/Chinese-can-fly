@@ -53,6 +53,24 @@
             }
         }
 
+        function stopHeartbeat() {
+            if (heartbeatTimer !== null) {
+                window.clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+        }
+
+        function startHeartbeat() {
+            if (heartbeatTimer !== null) return;
+            heartbeatTimer = window.setInterval(() => {
+                if (!serialPort || !serialPort.writable || !keepReading) {
+                    stopHeartbeat();
+                    return;
+                }
+                sendCommand("PING", false, { silent: true });
+            }, HEARTBEAT_INTERVAL_MS);
+        }
+
         function autoReconnectEnabled() {
             return elements.autoReconnect.checked;
         }
@@ -111,6 +129,7 @@
             const wasCurrentPort = serialPort === port;
             if (!wasCurrentPort && preferredPort !== port) return;
 
+            stopHeartbeat();
             keepReading = false;
             receiveBuffer = "";
             if (wasCurrentPort) serialPort = null;
@@ -248,6 +267,7 @@
 
         async function disconnectSerial() {
             manualDisconnect = true;
+            stopHeartbeat();
             elements.autoReconnect.checked = false;
             writeStoredSetting(AUTO_RECONNECT_STORAGE_KEY, "0");
             reconnectAttempt = 0;
@@ -274,17 +294,20 @@
             }
         }
 
-        function sendCommand(command, waitForConfirmation = false) {
+        function sendCommand(command, waitForConfirmation = false, options = {}) {
             const cleanCommand = String(command).replace(/[\r\n]+/g, " ").trim();
+            const silent = Boolean(options.silent);
             if (!cleanCommand) {
                 return Promise.resolve(waitForConfirmation
                     ? { success: false, command: "", message: "空指令" }
                     : false);
             }
-            const transaction = beginCommandFeedback(cleanCommand);
+            const transaction = silent ? null : beginCommandFeedback(cleanCommand);
             if (!serialPort || !serialPort.writable || !keepReading) {
-                appendLog("ERR", "请先连接蓝牙串口", "err");
-                settleCommandTransaction(transaction, false, "串口未连接");
+                if (!silent) {
+                    appendLog("ERR", "请先连接蓝牙串口", "err");
+                    settleCommandTransaction(transaction, false, "串口未连接");
+                }
                 return waitForConfirmation ? transaction.completion : Promise.resolve(false);
             }
 
@@ -298,11 +321,15 @@
                     }
                     writer = commandPort.writable.getWriter();
                     await writer.write(textEncoder.encode(cleanCommand + "\r\n"));
-                    appendLog("TX", cleanCommand, "tx");
-                    markCommandSent(transaction);
+                    if (!silent) {
+                        appendLog("TX", cleanCommand, "tx");
+                        markCommandSent(transaction);
+                    }
                     return true;
                 } catch (error) {
-                    settleCommandTransaction(transaction, false, "发送中断：" + error.message);
+                    if (!silent) {
+                        settleCommandTransaction(transaction, false, "发送中断：" + error.message);
+                    }
                     if (!manualDisconnect && commandPort === serialPort) {
                         handleConnectionLoss(commandPort, "串口发送中断");
                     }
@@ -315,4 +342,3 @@
                 ? writeChain.then(() => transaction.completion)
                 : writeChain;
         }
-

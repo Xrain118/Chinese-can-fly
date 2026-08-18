@@ -12,11 +12,11 @@
 
 ## 页面功能
 
-- **运动控制**：START/STOP；循迹/直行模式；循迹转向 PID；左右各一套但共享参数的速度 PI；左右目标差同步 P；四个车轮独立 CPS；八路循迹权重。
-- **陀螺仪**：IMU 3D 姿态模型（可拖动视角、以当前姿态归零）与车端角度控制状态。
+- **运动控制**：START/STOP；直接 PWM/直行模式；左右各一套但共享参数的速度 PI；左右目标差同步 P；四个车轮 CPS 诊断。
+- **IMU**：显示固件 `I` 帧中的 AX/AY/AZ/GX/GY/GZ/TEMP 原始值；当前固件不输出姿态角。
 - **串口数据**：终端 + 手动指令 + 常用指令按钮 + 命令回执 toast。
 - **PID 图表**：点击图表按钮在独立窗口实时绘制遥测曲线（8 路传感器、左右 PWM/编码器、PID 派生量等）。
-- **预设管理**：本机保存/导入/导出 JSON 预设，逐项确认地下发整套参数，或用"小车当前值"从 STATE 帧一键建立预设。
+- **预设管理**：本机保存/导入/导出 JSON 预设，逐项确认地下发整套参数，或用"小车当前值"从 CFG 帧一键建立预设。
 
 ## 协议契约（固件侧按此实现）
 
@@ -27,35 +27,33 @@
 | 前缀 | 说明 |
 | --- | --- |
 | `T k=v,...` / `TEL` | 周期遥测，建议 20 Hz。`VLF/VLR/VRF/VRR` 为四轮 CPS，`EL/ER` 为左右侧平均 CPS，`TL/TR` 为目标 CPS，`ED/ESC/ESA` 为同步误差/修正/活动状态 |
-| `S k=v,...` / `STATE` | GET ALL 的响应：在遥测快照外包含 `KP/KI/KD/SP/L/W1..W8/EC/EKP/EKI/EFS/ECL/ESE/ESKP/EST/ESL` 等配置 |
-| `I R=,P=,Y=` / `IMU` | 姿态帧（roll/pitch/yaw，度） |
+| `S k=v,...` / `STATE` | GET ALL 的运行快照响应，字段与 `T` 基本一致 |
+| `CFG k=v,...` / `CONFIG` | GET ALL 的配置响应，包含 `EC/EKP/EKI/EFS/ECL/ESE/ESKP/EST/ESL/WDT/BLV` |
+| `I AX=,AY=,AZ=,GX=,GY=,GZ=,TEMP=` / `IMU` | IMU 原始帧 |
 | `OK C=<CMD>` | 命令确认回执 |
 | `ERR C=<CMD>` | 命令拒绝回执 |
 
-S 帧本身也会结算页面发出的 `GET ALL`，所以固件也可以只回 S 帧、不发 OK。
+页面收到 `CFG` 后才会结算 `GET ALL` 并标记配置同步；单独的 `S` 帧只更新运行状态。
 
 ### 页面 → 小车（TX）
 
 ```
 START / STOP
-MODE TRACK | STRAIGHT | ANGLE
-PID kp ki kd          SPEED n          LIMIT n
-WEIGHT ch n           WEIGHTS w1..w8
+MODE DIRECT | STRAIGHT
+PWM left right        MOVE left right  SPEED n
 ENC ON | OFF          ENC PID kp ki    ENC CPS n    ENC LIMIT n
 ENC SYNC ON | OFF     ENC SYNC kp toleranceCps limitPwm
-ANGLE TARGET t        ANGLE PID kp ki kd
-ANGLE PWM min max     ANGLE SETTLE tol ms
-ANGLE ZERO
 GET ALL               RESET            DEFAULTS
+PING                  HEARTBEAT        FAULT CLEAR
 ```
 
-权重必须从 CH1 到 CH8 严格递增、±10000 内。默认基线：SPEED 400、PID 0.14/0/0.00025、LIMIT 280、权重 −7000/−5000/−3000/−1000/1000/3000/5000/7000、ENC OFF、ENC PID 0.02/0、CPS 5000、ENC LIMIT 100、SYNC OFF、同步 P 0.01、容差 50 CPS、限幅 50 PWM。
+默认基线：SPEED 0、ENC OFF、ENC PID 0.02/0、CPS 5000、ENC LIMIT 100、SYNC OFF、同步 P 0.01、容差 50 CPS、限幅 50 PWM。`MODE TRACK` 会返回 `ERR C=MODE,M=TRACK_REMOVED`，旧页面上的循迹/角度控件仅作为兼容占位。
 
 左前/左后和右前/右后的编码器分别测量，但同侧两台电机共用一个 PWM。四轮 CPS 的同侧差值用于诊断负载、打滑和编码器方向，不代表具备四路独立轮速闭环能力。
 
-## 尚未接入的硬件（页面已按占位处理）
+## 页面占位
 
-- **IMU 未接入**：固件不要发送 `I` 帧、也不要发送 `AH/AZ` 等角度字段，页面会显示"等待遥测"与"等待车端零位"；归零按钮不可用。
+- **姿态角未接入**：固件只发送原始 IMU；页面不再从 `I` 帧推断 Roll/Pitch/Yaw。
 - **编码器默认关闭**：页面初始为 ENC OFF（直接 PWM 开环），接好编码器后再按 `ENC ON` 闭环。
 
 ## 文件结构

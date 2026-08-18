@@ -410,7 +410,7 @@
         async function captureDeviceConfigurationAsPreset() {
             if (!presetDialogOpen) openPresetDialog();
             if (!vehicleSerialConnected()) {
-                setPresetStatus("error", "串口未连接", "请先连接小车，再点击本按钮读取 STATE 参数。");
+                setPresetStatus("error", "串口未连接", "请先连接小车，再点击本按钮读取 CFG 配置。");
                 return;
             }
 
@@ -423,10 +423,10 @@
             presetCaptureRequest = request;
             request.timeoutId = window.setTimeout(() => {
                 if (presetCaptureRequest !== request) return;
-                finishPresetCapture(false, "读取小车参数超时", "没有收到 STATE；请检查固件版本和蓝牙串口后重试。");
+                finishPresetCapture(false, "读取小车参数超时", "没有收到 CFG；请检查固件版本和蓝牙串口后重试。");
             }, PRESET_CAPTURE_TIMEOUT_MS);
 
-            setPresetStatus("applying", "正在读取小车当前值", "已发送 GET ALL；收到 STATE 后会自动建立预设。");
+            setPresetStatus("applying", "正在读取小车当前值", "已发送 GET ALL；收到 CFG 后会自动建立预设。");
             const result = await sendCommand("GET ALL", true);
             if (presetCaptureRequest !== request) return;
             if (!result.success) {
@@ -443,7 +443,7 @@
             if (deviceConfigurationSynchronized) {
                 elements.deviceConfigStatusBadge.dataset.state = "saved";
                 elements.deviceConfigStatusBadge.textContent = "已与小车同步";
-                elements.deviceConfigStatusText.textContent = "整车 STATE 参数已回读";
+                elements.deviceConfigStatusText.textContent = "整车 CFG 配置已回读";
             }
         }
 
@@ -490,23 +490,14 @@
          */
         function buildConfigurationCommands(configuration) {
             const config = validateConfiguration(configuration);
-            const angle = config.angle;
             return [
                 "STOP",
-                "MODE " + (config.drive.mode === "angle" ? "ANGLE" : (config.drive.mode === "straight" ? "STRAIGHT" : "TRACK")),
-                `PID ${config.tracking.kp} ${config.tracking.ki} ${config.tracking.kd}`,
-                /* 角度目标和配置可复现；运行时零位必须由实车当前朝向决定。 */
-                `ANGLE PID ${angle.kp} ${angle.ki} ${angle.kd}`,
-                `ANGLE TARGET ${angle.target}`,
-                `ANGLE PWM ${angle.minimumPwm} ${angle.maximumPwm}`,
-                `ANGLE SETTLE ${angle.toleranceDegrees} ${angle.settleTimeMs}`,
+                "MODE " + (config.drive.mode === "straight" ? "STRAIGHT" : "DIRECT"),
                 "SPEED " + config.drive.speed,
-                "LIMIT " + config.tracking.correctionLimit,
                 `ENC PID ${config.encoder.kp} ${config.encoder.ki}`,
                 "ENC CPS " + config.encoder.fullScaleCps,
                 "ENC LIMIT " + config.encoder.correctionLimit,
                 `ENC SYNC ${config.encoder.sync.kp} ${config.encoder.sync.toleranceCps} ${config.encoder.sync.correctionLimit}`,
-                "WEIGHTS " + config.tracking.weights.join(" "),
                 "ENC " + (config.encoder.enabled ? "ON" : "OFF"),
                 "ENC SYNC " + (config.encoder.sync.enabled ? "ON" : "OFF")
             ];
@@ -542,10 +533,7 @@
                     updatePresetProgress(index, commands.length, "正在发送 " + command);
                     const result = await sendCommand(command, true);
                     if (!result.success) {
-                        const hint = command.startsWith("WEIGHTS ")
-                            ? "；八路 WEIGHTS 未被接受，请确认小车已烧录八路固件"
-                            : "";
-                        throw new Error(`${command} 未完成：${result.message}${hint}`);
+                        throw new Error(`${command} 未完成：${result.message}`);
                     }
                     updatePresetProgress(index + 1, commands.length, command + " 已确认");
                 }
@@ -648,7 +636,7 @@
                 markDeviceConfigurationRefreshing();
                 elements.deviceConfigStatusBadge.dataset.state = "waiting";
                 elements.deviceConfigStatusBadge.textContent = "正在读取";
-                elements.deviceConfigStatusText.textContent = "已发送 GET ALL，等待小车返回 STATE";
+                elements.deviceConfigStatusText.textContent = "已发送 GET ALL，等待小车返回 CFG";
                 sendCommand("GET ALL");
             });
             elements.captureCurrentPresetButton.addEventListener("click", captureDeviceConfigurationAsPreset);

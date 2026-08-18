@@ -258,6 +258,7 @@
             setVehicleCommandControlsDisabled(!connected || configApplyRunning);
             elements.resetVehicleYawButton.disabled = !connected || !angleControlReady;
             if (!connected) {
+                if (typeof stopHeartbeat === "function") stopHeartbeat();
                 deviceConfigurationSynchronized = false;
                 if (typeof markDeviceConfigurationDisconnected === "function") markDeviceConfigurationDisconnected();
             }
@@ -279,48 +280,49 @@
             const isRunning = Number(running) === 1 || String(running).toUpperCase() === "RUN";
             elements.runState.textContent = isRunning ? "RUN" : "STOP";
             elements.runState.classList.toggle("running", isRunning);
+            if (typeof startHeartbeat === "function" && typeof stopHeartbeat === "function") {
+                if (isRunning) startHeartbeat();
+                else stopHeartbeat();
+            }
         }
 
         function renderControlStrategy() {
             const isStraight = currentDriveMode === 1;
             const isAngle = currentDriveMode === 2;
-            /*
-             * 控制链按 0/1/2 模式说明当前是谁生成左右轮需求，
-             * 避免用户把角度 PID 误认为 SPEED 的附加修正。
-             */
+            /* 控制链按当前 F407 固件的 DIRECT/STRAIGHT 模式说明输出来源。 */
             elements.controlStrategy.textContent = isAngle
-                ? "角度 PID 产生原地反向轮速"
-                : (isStraight ? "左右轮同速分配" : "循迹 PID 产生左右差速");
+                ? "角度模式未接入"
+                : (isStraight ? "左右轮同速分配" : "直接 PWM");
             elements.modeDescription.textContent = isAngle
-                ? "角度模式：使用角度 PID，令 base=0，形成左右轮反向的原地转向。"
+                ? "角度模式：当前 F407 固件未接入，页面不会发送 ANGLE 命令。"
                 : (isStraight
-                    ? "直行模式：左右轮得到相同 SPEED 指令，循迹 PID 和传感器权重暂不参与输出。"
-                    : "循迹模式：SPEED 决定中间速度，位置 PID 只在左右轮之间增加差速。");
-            /* 循迹参数只在模式 0 生效，角度卡片只在模式 2 生效。 */
+                    ? "直行模式：左右轮得到相同 SPEED 指令。"
+                    : "直接模式：PWM/MOVE 直接给出左右轮目标；SPEED 不会自动分配。");
+            /* 旧循迹/角度配置区保留为页面兼容占位。 */
             const trackingActive = currentDriveMode === 0;
-            elements.trackingPidScope.textContent = trackingActive ? "循迹模式生效" : "当前不参与输出";
-            elements.trackingWeightsScope.textContent = trackingActive ? "循迹模式生效" : "当前不参与输出";
+            elements.trackingPidScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
+            elements.trackingWeightsScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
             elements.trackingPidScope.classList.toggle("active", trackingActive);
             elements.trackingWeightsScope.classList.toggle("active", trackingActive);
             elements.anglePidScope.textContent = isAngle ? "角度模式生效" : "当前不参与输出";
             elements.anglePidScope.classList.toggle("active", isAngle);
             document.getElementById("speedMeaning").textContent = isAngle
-                ? "角度模式原地旋转，不使用 SPEED；转向强度由航向角 PID 和 PWM 限幅决定。"
-                : "这是循迹和直行共用的基础指令；转向 PID 不会替代它。";
+                ? "角度模式未接入。"
+                : (isStraight ? "直行模式下 SPEED 会同时写入左右轮。" : "直接模式下请使用 PWM/MOVE。");
 
             /* HOLDING 状态由车端短路制动，不能显示成仍由编码器 PI 驱动。 */
             elements.chainExecutionValue.textContent = isAngle
-                ? (currentAngleState === 4 ? "短路制动保持" : (encoderLoopEnabled ? "角度 PID + 编码器 PI" : "角度 PID 直接 PWM"))
+                ? "角度模式未接入"
                 : (encoderLoopEnabled
                     ? (encoderSyncEnabled ? "速度 PI + 同步 P" : "编码器 PI 修正 PWM")
                     : "直接 PWM");
             elements.executionDescription.textContent = isAngle
                 ? (encoderLoopEnabled
-                    ? "ENC ON：角度 PID 产生左右反向轮速需求，编码器 PI 再修正最终 PWM。"
-                    : "ENC OFF：角度 PID 的原地转向输出直接写入左右电机 PWM。")
+                    ? "ENC ON：角度模式未接入，编码器设置仍保留。"
+                    : "ENC OFF：角度模式未接入。")
                 : (encoderLoopEnabled
-                    ? "ENC ON：目标 CPS 由 SPEED、模式和满量程 CPS 自动换算，速度 PI 只修正最终 PWM。"
-                    : "ENC OFF：SPEED 经模式分配后直接作为 PWM；目标 CPS 仅作换算参考。");
+                    ? "ENC ON：目标 CPS 由当前 PWM 需求和满量程 CPS 自动换算，速度 PI 只修正最终 PWM。"
+                    : "ENC OFF：命令值直接作为 PWM；目标 CPS 仅作换算参考。");
             elements.encoderParameterScope.textContent = encoderLoopEnabled ? "ENC ON 正在生效" : "ENC OFF 正在生效";
             elements.encoderParameterScope.classList.toggle("active", encoderLoopEnabled);
             renderEncoderSyncState();

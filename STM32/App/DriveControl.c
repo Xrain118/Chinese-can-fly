@@ -4,23 +4,16 @@
 
 #if DRIVE_CONTROL_ENABLE_HARDWARE
 #include "Motor.h"
-#include "Tracking.h"
 #endif
 
 typedef struct
 {
-	SimplePID trackingPid;
 	SimplePID leftSpeedPid;
 	SimplePID rightSpeedPid;
 	DriveControl_Snapshot snapshot;
-	int16_t weights[DRIVE_CONTROL_SENSOR_COUNT];
-	float trackingKp;
-	float trackingKi;
-	float trackingKd;
 	float encoderKp;
 	float encoderKi;
 	float encoderSyncKp;
-	int16_t trackingLimit;
 	int16_t encoderLimit;
 	int16_t encoderSyncLimit;
 	int32_t encoderFullScaleCps;
@@ -32,7 +25,19 @@ typedef struct
 	uint8_t encoderSynchronized;
 } DriveControl_State;
 
+/* 驱动控制状态由 ControlTask 串行访问；遥测通过快照读取当前值。 */
 static DriveControl_State g_drive;
+
+static uint8_t DriveControl_CommandChangesDirection(int16_t oldCommand,
+													 int16_t newCommand)
+{
+	/* 方向变化时清 PI，避免旧积分把刚反向的电机继续往原方向推。 */
+	if ((oldCommand == 0) || (newCommand == 0))
+	{
+		return (oldCommand != newCommand) ? 1U : 0U;
+	}
+	return ((oldCommand > 0) != (newCommand > 0)) ? 1U : 0U;
+}
 
 static int16_t DriveControl_ClampPwm(int32_t value)
 {
@@ -54,6 +59,7 @@ static int16_t DriveControl_RoundFloat(float value)
 
 static int32_t DriveControl_CommandToCps(int16_t pwm)
 {
+	/* 满量程 CPS 是现场标定值，用它把 PWM 需求换算为闭环目标速度。 */
 	int64_t scaled = (int64_t)pwm * g_drive.encoderFullScaleCps;
 	if (scaled >= 0)
 	{
@@ -66,53 +72,6 @@ static int32_t DriveControl_CommandToCps(int16_t pwm)
 	return (int32_t)(scaled / DRIVE_CONTROL_PWM_MAX);
 }
 
-static uint8_t DriveControl_WeightsAreValid(const int16_t weights[DRIVE_CONTROL_SENSOR_COUNT])
-{
-	uint8_t index;
-	if (weights == 0)
-	{
-		return 0U;
-	}
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-	{
-		if ((weights[index] < -10000) || (weights[index] > 10000))
-		{
-			return 0U;
-		}
-		if ((index != 0U) && (weights[index] <= weights[index - 1U]))
-		{
-			return 0U;
-		}
-	}
-	return 1U;
-}
-
-static int16_t DriveControl_CalculateTrackingError(uint8_t sensorBits, uint8_t *activeCount)
-{
-	int32_t sum = 0;
-	uint8_t count = 0U;
-	uint8_t index;
-
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-	{
-		if ((sensorBits & (uint8_t)(1U << index)) != 0U)
-		{
-			sum += g_drive.weights[index];
-			count++;
-		}
-	}
-
-	*activeCount = count;
-	return (count == 0U) ? 0 : (int16_t)(sum / count);
-}
-
-static void DriveControl_ReadSensors(void)
-{
-#if DRIVE_CONTROL_ENABLE_HARDWARE
-	g_drive.snapshot.sensorBits = Tracking_ReadAll();
-#endif
-}
-
 static void DriveControl_WriteMotors(int16_t leftPwm, int16_t rightPwm)
 {
 #if DRIVE_CONTROL_ENABLE_HARDWARE
@@ -121,44 +80,6 @@ static void DriveControl_WriteMotors(int16_t leftPwm, int16_t rightPwm)
 	(void)leftPwm;
 	(void)rightPwm;
 #endif
-}
-
-static void DriveControl_UpdateTracking(float dtSeconds)
-{
-	uint8_t activeCount = 0U;
-	float correction;
-
-	g_drive.snapshot.trackingError =
-		DriveControl_CalculateTrackingError(g_drive.snapshot.sensorBits, &activeCount);
-
-	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
-	{
-		g_drive.snapshot.trackingCorrection = 0;
-		g_drive.snapshot.desiredLeftPwm = g_drive.snapshot.speed;
-		g_drive.snapshot.desiredRightPwm = g_drive.snapshot.speed;
-		g_drive.snapshot.trackingState = (activeCount == 0U) ? 4U : 0U;
-		return;
-	}
-
-	if (activeCount == 0U)
-	{
-		SimplePID_Reset(&g_drive.trackingPid);
-		g_drive.snapshot.trackingCorrection = 0;
-		g_drive.snapshot.desiredLeftPwm = g_drive.snapshot.speed;
-		g_drive.snapshot.desiredRightPwm = g_drive.snapshot.speed;
-		g_drive.snapshot.trackingState = 4U;
-		return;
-	}
-
-	correction = SimplePID_Update(&g_drive.trackingPid,
-								  (float)g_drive.snapshot.trackingError,
-								  dtSeconds);
-	g_drive.snapshot.trackingCorrection = DriveControl_RoundFloat(correction);
-	g_drive.snapshot.desiredLeftPwm = DriveControl_ClampPwm(
-		(int32_t)g_drive.snapshot.speed + g_drive.snapshot.trackingCorrection);
-	g_drive.snapshot.desiredRightPwm = DriveControl_ClampPwm(
-		(int32_t)g_drive.snapshot.speed - g_drive.snapshot.trackingCorrection);
-	g_drive.snapshot.trackingState = (activeCount >= 3U) ? 3U : 0U;
 }
 
 static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
@@ -174,6 +95,7 @@ static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
 
 	if ((g_drive.encoderSynchronized == 0U) || (elapsedMs == 0U))
 	{
+		/* 第一次采样只建立基准计数，下一周期才计算 CPS。 */
 		g_drive.previousLeftFrontCount = lf;
 		g_drive.previousLeftRearCount = lr;
 		g_drive.previousRightFrontCount = rf;
@@ -233,6 +155,7 @@ static int16_t DriveControl_UpdateEncoderSync(void)
 	int32_t effectiveError;
 	float correction;
 
+	/* 同步 P 只修正左右差速误差，不改变整体前进/后退需求。 */
 	g_drive.snapshot.encoderSyncError =
 		(g_drive.snapshot.leftTargetCps - g_drive.snapshot.rightTargetCps) -
 		(g_drive.snapshot.leftMeasuredCps - g_drive.snapshot.rightMeasuredCps);
@@ -292,6 +215,7 @@ static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 
 	if (g_drive.snapshot.encoderClosed == 0U)
 	{
+		/* 开环时仍计算目标/实测差值供遥测诊断，但不参与 PWM 输出。 */
 		g_drive.snapshot.encoderSyncError =
 			(g_drive.snapshot.leftTargetCps - g_drive.snapshot.rightTargetCps) -
 			(g_drive.snapshot.leftMeasuredCps - g_drive.snapshot.rightMeasuredCps);
@@ -324,20 +248,11 @@ static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 
 void DriveControl_LoadDefaults(void)
 {
-	static const int16_t defaultWeights[DRIVE_CONTROL_SENSOR_COUNT] = {
-		-7000, -5000, -3000, -1000, 1000, 3000, 5000, 7000
-	};
-	uint8_t index;
-
 	g_drive.snapshot.running = 0U;
-	g_drive.snapshot.mode = DRIVE_MODE_TRACK;
+	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
 	g_drive.snapshot.encoderClosed = 0U;
 	g_drive.snapshot.encoderSyncEnabled = 0U;
-	g_drive.snapshot.speed = 400;
-	g_drive.trackingKp = 0.140000f;
-	g_drive.trackingKi = 0.000000f;
-	g_drive.trackingKd = 0.000250f;
-	g_drive.trackingLimit = 280;
+	g_drive.snapshot.speed = 0;
 	g_drive.encoderKp = 0.020000f;
 	g_drive.encoderKi = 0.000000f;
 	g_drive.encoderLimit = 100;
@@ -346,18 +261,10 @@ void DriveControl_LoadDefaults(void)
 	g_drive.encoderSyncToleranceCps = 50;
 	g_drive.encoderSyncLimit = 50;
 
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-	{
-		g_drive.weights[index] = defaultWeights[index];
-	}
-
-	SimplePID_Init(&g_drive.trackingPid, g_drive.trackingKp,
-				   g_drive.trackingKi, g_drive.trackingKd,
-				   (float)g_drive.trackingLimit);
 	SimplePID_Init(&g_drive.leftSpeedPid, g_drive.encoderKp,
-				   g_drive.encoderKi, 0.0f, (float)g_drive.encoderLimit);
+				   g_drive.encoderKi, (float)g_drive.encoderLimit);
 	SimplePID_Init(&g_drive.rightSpeedPid, g_drive.encoderKp,
-				   g_drive.encoderKi, 0.0f, (float)g_drive.encoderLimit);
+				   g_drive.encoderKi, (float)g_drive.encoderLimit);
 	DriveControl_Reset();
 }
 
@@ -365,7 +272,6 @@ void DriveControl_Init(void)
 {
 #if DRIVE_CONTROL_ENABLE_HARDWARE
 	Motor_Init();
-	Tracking_Init();
 #endif
 	Encoder_Init();
 	DriveControl_LoadDefaults();
@@ -373,12 +279,9 @@ void DriveControl_Init(void)
 
 void DriveControl_Reset(void)
 {
-	SimplePID_Reset(&g_drive.trackingPid);
 	SimplePID_Reset(&g_drive.leftSpeedPid);
 	SimplePID_Reset(&g_drive.rightSpeedPid);
 	g_drive.encoderSynchronized = 0U;
-	g_drive.snapshot.trackingError = 0;
-	g_drive.snapshot.trackingCorrection = 0;
 	g_drive.snapshot.desiredLeftPwm = 0;
 	g_drive.snapshot.desiredRightPwm = 0;
 	g_drive.snapshot.appliedLeftPwm = 0;
@@ -394,7 +297,6 @@ void DriveControl_Reset(void)
 	g_drive.snapshot.encoderSyncError = 0;
 	g_drive.snapshot.encoderSyncCorrection = 0;
 	g_drive.snapshot.encoderSyncActive = 0U;
-	g_drive.snapshot.trackingState = 0U;
 	DriveControl_WriteMotors(0, 0);
 }
 
@@ -407,87 +309,71 @@ void DriveControl_Start(void)
 void DriveControl_Stop(void)
 {
 	g_drive.snapshot.running = 0U;
+	/* Stop 必须立即清零输出，确保故障链调用时不会保留上一帧 PWM。 */
 	DriveControl_Reset();
 }
 
 uint8_t DriveControl_SetMode(DriveControl_Mode mode)
 {
-	if ((mode != DRIVE_MODE_TRACK) && (mode != DRIVE_MODE_STRAIGHT))
+	if ((mode != DRIVE_MODE_DIRECT) && (mode != DRIVE_MODE_STRAIGHT))
 	{
 		return 0U;
 	}
 	g_drive.snapshot.mode = mode;
-	DriveControl_Reset();
-	return 1U;
-}
-
-uint8_t DriveControl_SetSpeed(int16_t speed)
-{
-	if ((speed < 0) || (speed > DRIVE_CONTROL_PWM_MAX))
-	{
-		return 0U;
-	}
-	g_drive.snapshot.speed = speed;
 	SimplePID_Reset(&g_drive.leftSpeedPid);
 	SimplePID_Reset(&g_drive.rightSpeedPid);
 	return 1U;
 }
 
-uint8_t DriveControl_SetTrackingGains(float kp, float ki, float kd)
+uint8_t DriveControl_SetSpeed(int16_t speed)
 {
-	if ((kp < 0.0f) || (kp > 2.0f) ||
-		(ki < 0.0f) || (ki > 2.0f) ||
-		(kd < 0.0f) || (kd > 1.0f))
+	int16_t previousLeft;
+	int16_t previousRight;
+
+	if ((speed < -DRIVE_CONTROL_PWM_MAX) || (speed > DRIVE_CONTROL_PWM_MAX))
 	{
 		return 0U;
 	}
-	g_drive.trackingKp = kp;
-	g_drive.trackingKi = ki;
-	g_drive.trackingKd = kd;
-	SimplePID_SetGains(&g_drive.trackingPid, kp, ki, kd);
+	g_drive.snapshot.speed = speed;
+	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
+	{
+		previousLeft = g_drive.snapshot.desiredLeftPwm;
+		previousRight = g_drive.snapshot.desiredRightPwm;
+		g_drive.snapshot.desiredLeftPwm = speed;
+		g_drive.snapshot.desiredRightPwm = speed;
+		if (DriveControl_CommandChangesDirection(previousLeft, speed) != 0U)
+		{
+			SimplePID_Reset(&g_drive.leftSpeedPid);
+		}
+		if (DriveControl_CommandChangesDirection(previousRight, speed) != 0U)
+		{
+			SimplePID_Reset(&g_drive.rightSpeedPid);
+		}
+	}
 	return 1U;
 }
 
-uint8_t DriveControl_SetTrackingLimit(int16_t limit)
+uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm)
 {
-	if ((limit < 0) || (limit > 500))
+	int16_t previousLeft = g_drive.snapshot.desiredLeftPwm;
+	int16_t previousRight = g_drive.snapshot.desiredRightPwm;
+
+	if ((leftPwm < -DRIVE_CONTROL_PWM_MAX) || (leftPwm > DRIVE_CONTROL_PWM_MAX) ||
+		(rightPwm < -DRIVE_CONTROL_PWM_MAX) || (rightPwm > DRIVE_CONTROL_PWM_MAX))
 	{
 		return 0U;
 	}
-	g_drive.trackingLimit = limit;
-	SimplePID_SetOutputLimit(&g_drive.trackingPid, (float)limit);
-	return 1U;
-}
-
-uint8_t DriveControl_SetWeight(uint8_t channel, int16_t weight)
-{
-	int16_t candidate[DRIVE_CONTROL_SENSOR_COUNT];
-	uint8_t index;
-
-	if ((channel < 1U) || (channel > DRIVE_CONTROL_SENSOR_COUNT))
+	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
+	g_drive.snapshot.desiredLeftPwm = leftPwm;
+	g_drive.snapshot.desiredRightPwm = rightPwm;
+	if (DriveControl_CommandChangesDirection(previousLeft, leftPwm) != 0U)
 	{
-		return 0U;
+		SimplePID_Reset(&g_drive.leftSpeedPid);
 	}
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
+	if (DriveControl_CommandChangesDirection(previousRight, rightPwm) != 0U)
 	{
-		candidate[index] = g_drive.weights[index];
+		SimplePID_Reset(&g_drive.rightSpeedPid);
 	}
-	candidate[channel - 1U] = weight;
-	return DriveControl_SetWeights(candidate);
-}
-
-uint8_t DriveControl_SetWeights(const int16_t weights[DRIVE_CONTROL_SENSOR_COUNT])
-{
-	uint8_t index;
-	if (DriveControl_WeightsAreValid(weights) == 0U)
-	{
-		return 0U;
-	}
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-	{
-		g_drive.weights[index] = weights[index];
-	}
-	SimplePID_Reset(&g_drive.trackingPid);
 	return 1U;
 }
 
@@ -509,8 +395,8 @@ uint8_t DriveControl_SetEncoderGains(float kp, float ki)
 	}
 	g_drive.encoderKp = kp;
 	g_drive.encoderKi = ki;
-	SimplePID_SetGains(&g_drive.leftSpeedPid, kp, ki, 0.0f);
-	SimplePID_SetGains(&g_drive.rightSpeedPid, kp, ki, 0.0f);
+	SimplePID_SetGains(&g_drive.leftSpeedPid, kp, ki);
+	SimplePID_SetGains(&g_drive.rightSpeedPid, kp, ki);
 	return 1U;
 }
 
@@ -569,12 +455,14 @@ void DriveControl_Update(uint16_t elapsedMs)
 	}
 	dtSeconds = (float)elapsedMs / 1000.0f;
 
-	DriveControl_ReadSensors();
+	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
+	{
+		g_drive.snapshot.desiredLeftPwm = g_drive.snapshot.speed;
+		g_drive.snapshot.desiredRightPwm = g_drive.snapshot.speed;
+	}
 
 	if (g_drive.snapshot.running == 0U)
 	{
-		g_drive.snapshot.desiredLeftPwm = 0;
-		g_drive.snapshot.desiredRightPwm = 0;
 		g_drive.snapshot.appliedLeftPwm = 0;
 		g_drive.snapshot.appliedRightPwm = 0;
 		DriveControl_UpdateEncoderMeasurements(elapsedMs);
@@ -582,7 +470,6 @@ void DriveControl_Update(uint16_t elapsedMs)
 		return;
 	}
 
-	DriveControl_UpdateTracking(dtSeconds);
 	DriveControl_UpdateSpeedPi(elapsedMs, dtSeconds);
 	DriveControl_WriteMotors(g_drive.snapshot.appliedLeftPwm,
 							  g_drive.snapshot.appliedRightPwm);
@@ -595,34 +482,6 @@ void DriveControl_GetSnapshot(DriveControl_Snapshot *snapshot)
 		return;
 	}
 	*snapshot = g_drive.snapshot;
-}
-
-void DriveControl_FormatSensorBits(char output[9])
-{
-	uint8_t index;
-	if (output == 0)
-	{
-		return;
-	}
-	for (index = 0U; index < DRIVE_CONTROL_SENSOR_COUNT; index++)
-	{
-		output[index] = ((g_drive.snapshot.sensorBits & (uint8_t)(1U << index)) != 0U) ? '1' : '0';
-	}
-	output[8] = '\0';
-}
-
-float DriveControl_GetTrackingKp(void) { return g_drive.trackingKp; }
-float DriveControl_GetTrackingKi(void) { return g_drive.trackingKi; }
-float DriveControl_GetTrackingKd(void) { return g_drive.trackingKd; }
-int16_t DriveControl_GetTrackingLimit(void) { return g_drive.trackingLimit; }
-
-int16_t DriveControl_GetWeight(uint8_t channel)
-{
-	if ((channel < 1U) || (channel > DRIVE_CONTROL_SENSOR_COUNT))
-	{
-		return 0;
-	}
-	return g_drive.weights[channel - 1U];
 }
 
 uint8_t DriveControl_GetEncoderClosed(void) { return g_drive.snapshot.encoderClosed; }

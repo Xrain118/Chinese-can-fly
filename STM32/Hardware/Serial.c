@@ -1,7 +1,6 @@
 #include "Serial.h"
 #include "BoardPins.h"
 #include "BoardClock.h"
-#include <stdarg.h>
 #include <stdio.h>
 
 static uint8_t g_rxBuffer[SERIAL_RX_BUFFER_SIZE];
@@ -18,7 +17,7 @@ static void Serial_SetAlternateFunction(GPIO_TypeDef *port, uint8_t pin, uint8_t
 int fputc(int character, FILE *file)
 {
 	(void)file;
-	Serial_SendByte((uint8_t)character);
+	/* 禁止 printf 绕过 ProtocolTx/SerialTxTask，避免多任务输出交错。 */
 	return character;
 }
 
@@ -114,18 +113,6 @@ void Serial_SendNumber(uint32_t number, uint8_t length)
 		Serial_SendByte((uint8_t)(((number / divisor) % 10U) + (uint32_t)'0'));
 		divisor /= 10U;
 	}
-}
-
-void Serial_Printf(const char *format, ...)
-{
-	char buffer[192];
-	va_list args;
-	if (format == 0) return;
-	va_start(args, format);
-	(void)vsnprintf(buffer, sizeof(buffer), format, args);
-	va_end(args);
-	buffer[sizeof(buffer) - 1U] = '\0';
-	Serial_SendString(buffer);
 }
 
 uint16_t Serial_Available(void)

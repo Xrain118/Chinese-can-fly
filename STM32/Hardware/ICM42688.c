@@ -85,7 +85,13 @@ static int16_t ICM42688_Combine(const uint8_t *bytes)
 
 static void ICM42688_InitHardware(void)
 {
-	uint8_t pin;
+	static const uint8_t spiPins[] =
+	{
+		BOARD_IMU_SCK_PIN,
+		BOARD_IMU_MISO_PIN,
+		BOARD_IMU_MOSI_PIN
+	};
+	uint8_t index;
 	uint32_t csShift = BOARD_IMU_CS_PIN * 2U;
 	uint32_t intShift = BOARD_IMU_INT_PIN * 2U;
 
@@ -94,8 +100,9 @@ static void ICM42688_InitHardware(void)
 	RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
 	(void)RCC->APB2ENR;
 
-	for (pin = BOARD_IMU_SCK_PIN; pin <= BOARD_IMU_MOSI_PIN; pin++)
+	for (index = 0U; index < (sizeof(spiPins) / sizeof(spiPins[0])); index++)
 	{
+		uint8_t pin = spiPins[index];
 		BOARD_IMU_SPI_PORT->MODER =
 			(BOARD_IMU_SPI_PORT->MODER & ~(3UL << (pin * 2U))) |
 			(2UL << (pin * 2U));

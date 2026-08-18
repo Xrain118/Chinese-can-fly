@@ -1,0 +1,8 @@
+STM32/Objects/
+STM32/Listings/
+*.uvguix.*
+**/__pycache__/
+*.pyc
+raspberry_pi/ros2_ws/build/
+raspberry_pi/ros2_ws/install/
+raspberry_pi/ros2_ws/log/
