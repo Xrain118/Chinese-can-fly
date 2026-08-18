@@ -1,3 +1,9 @@
+/*
+ * 协议命令队列。
+ *
+ * DebugProtocol 只负责把文本命令翻译成 UgvCommand 并投递；ControlTask
+ * 是唯一消费者和实际执行者。这条队列就是协议层与控制层的隔离边界。
+ */
 #include "UgvCommandQueue.h"
 #include "FreeRTOS.h"
 #include "queue.h"
@@ -30,6 +36,7 @@ uint8_t UgvCommandQueue_Send(const UgvCommand *command)
 	}
 	if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
 	{
+		/* 协议任务可短等几毫秒吸收瞬时连发，但不能长期阻塞串口 RX。 */
 		waitTicks = pdMS_TO_TICKS(5U);
 	}
 	return (xQueueSend(g_commandQueue, command, waitTicks) == pdPASS) ? 1U : 0U;

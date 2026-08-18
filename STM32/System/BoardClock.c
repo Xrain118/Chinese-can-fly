@@ -1,3 +1,9 @@
+/*
+ * STM32F407 系统时钟初始化。
+ *
+ * 目标频率固定为 168 MHz；优先使用 8 MHz 外部晶振 HSE，失败时退回 16 MHz
+ * HSI 并重新计算 PLLM。返回值用于启动诊断，不影响后续控制任务结构。
+ */
 #include "BoardClock.h"
 #include "stm32f4xx.h"
 
@@ -35,11 +41,13 @@ uint8_t BoardClock_Init(void)
 	usingHse = BoardClock_WaitForSet(&RCC->CR, RCC_CR_HSERDY);
 	if (usingHse != 0U)
 	{
+		/* 外部 8 MHz 晶振：PLLM=8，VCO 输入 1 MHz。 */
 		pllM = 8U;
 		pllSource = RCC_PLLCFGR_PLLSRC_HSE;
 	}
 	else
 	{
+		/* 内部 16 MHz HSI 兜底：PLLM=16，仍让 VCO 输入保持 1 MHz。 */
 		pllM = 16U;
 		pllSource = RCC_PLLCFGR_PLLSRC_HSI;
 	}

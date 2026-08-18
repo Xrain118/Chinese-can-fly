@@ -1,3 +1,10 @@
+/*
+ * TB6612 四轮电机驱动封装。
+ *
+ * DriveControl 给的是逻辑左右侧 PWM，本层负责应用每个轮子的方向校准符号、
+ * 设置 IN1/IN2 方向脚和 TIM5 PWM 占空比。零速时拉低两侧 STBY，保证停车
+ * 路径尽量直接、确定。
+ */
 #include "Motor.h"
 #include "MotorPWM.h"
 #include "BoardPins.h"
@@ -29,6 +36,7 @@ static void Motor_WritePin(uint8_t pin, uint8_t high)
 
 static void Motor_SetDirection(int16_t command, uint8_t in1, uint8_t in2)
 {
+	/* TB6612 方向由 IN1/IN2 决定；PWM 只表示幅值，正负号在这里消化。 */
 	if (command > 0)
 	{
 		Motor_WritePin(in1, 1U);
@@ -109,6 +117,7 @@ void Motor_SetSpeeds(int16_t leftSpeed, int16_t rightSpeed)
 void Motor_SetWheelSpeeds(int16_t leftFrontSpeed, int16_t leftRearSpeed,
 						  int16_t rightFrontSpeed, int16_t rightRearSpeed)
 {
+	/* 四个方向符号是现场校准点：改线或换电机后优先检查 Motor.h 中的 SIGN。 */
 	int16_t lf = Motor_Clamp((int32_t)leftFrontSpeed * MOTOR_LEFT_FRONT_DIRECTION_SIGN);
 	int16_t lr = Motor_Clamp((int32_t)leftRearSpeed * MOTOR_LEFT_REAR_DIRECTION_SIGN);
 	int16_t rf = Motor_Clamp((int32_t)rightFrontSpeed * MOTOR_RIGHT_FRONT_DIRECTION_SIGN);
@@ -124,6 +133,7 @@ void Motor_SetWheelSpeeds(int16_t leftFrontSpeed, int16_t leftRearSpeed,
 		return;
 	}
 
+	/* 先关 STBY 再改方向/占空比，避免 TB6612 在切向瞬间打出毛刺。 */
 	Motor_WritePin(BOARD_MOTOR_LEFT_STBY_PIN, 0U);
 	Motor_WritePin(BOARD_MOTOR_RIGHT_STBY_PIN, 0U);
 	Motor_SetDirection(lf, BOARD_MOTOR_LF_IN1_PIN, BOARD_MOTOR_LF_IN2_PIN);

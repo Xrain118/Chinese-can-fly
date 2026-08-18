@@ -1,3 +1,10 @@
+/*
+ * 车端安全链。
+ *
+ * 本文件只负责把“当前是否允许继续运行”判定清楚：通信看门狗、急停、
+ * 电池、IMU 和编码器异常都会锁存到 faultFlags。真正停车仍调用
+ * DriveControl_Stop，让电机输出只有一个统一清零入口。
+ */
 #include "Safety.h"
 #include "BoardPins.h"
 #include "PowerMonitor.h"
@@ -106,6 +113,7 @@ static void Safety_UpdateInputs(uint32_t nowMs)
 	if ((g_safety.imuHealthy == 0U) ||
 		((uint32_t)(nowMs - g_safety.lastImuSampleMs) > SAFETY_IMU_TIMEOUT_MS))
 	{
+		/* IMU 是上层定位/姿态链路的基础输入，缺失时禁止继续运行。 */
 		g_safety.faultFlags |= SAFETY_FAULT_IMU;
 	}
 }
@@ -115,6 +123,7 @@ void Safety_Init(uint32_t nowMs, uint8_t imuReady)
 	uint8_t index;
 	uint32_t shift = BOARD_ESTOP_PIN * 2U;
 
+	/* PE12 使用上拉输入，按钮拉低时触发软件急停。硬急停仍应切断电机电源/STBY。 */
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOEEN;
 	(void)RCC->AHB1ENR;
 	BOARD_ESTOP_PORT->MODER &= ~(3UL << shift);
@@ -190,6 +199,7 @@ uint8_t Safety_RequestStart(uint32_t nowMs)
 {
 	uint32_t batteryMv;
 
+	/* START 本身视为一次有效通信，可解除旧的通信超时；其他故障必须现场条件恢复。 */
 	g_safety.faultFlags &= ~SAFETY_FAULT_COMM_TIMEOUT;
 	Safety_KickCommunication(nowMs);
 	Safety_UpdateInputs(nowMs);
@@ -210,6 +220,7 @@ uint8_t Safety_ClearFaults(uint32_t nowMs)
 	uint32_t minimumBatteryMv;
 
 	Safety_UpdateInputs(nowMs);
+	/* 低压故障清除使用恢复阈值，形成回差，避免电压在阈值附近反复启停。 */
 	minimumBatteryMv =
 		((g_safety.faultFlags & SAFETY_FAULT_LOW_BATTERY) != 0U) ?
 		POWER_BATTERY_RECOVER_MV : POWER_BATTERY_LOW_MV;

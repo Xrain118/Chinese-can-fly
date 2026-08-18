@@ -1,3 +1,9 @@
+/*
+ * 电池电压采样。
+ *
+ * PC0 读取分压后的电池电压，本层把 ADC 原始值还原成整包电池 mV。
+ * Safety 只消费滤波后的电压和 ADC 是否成功，不直接碰 ADC 寄存器。
+ */
 #include "PowerMonitor.h"
 #include "BoardPins.h"
 
@@ -53,6 +59,7 @@ uint8_t PowerMonitor_Update(void)
 	}
 
 	g_rawAdc = (uint16_t)BOARD_BATTERY_ADC->DR;
+	/* 先算 ADC 引脚电压，再按分压电阻比例还原电池端电压。 */
 	pinMv = ((uint32_t)g_rawAdc * POWER_BATTERY_ADC_REFERENCE_MV + 2047UL) / 4095UL;
 	batteryMv = (uint32_t)(((uint64_t)pinMv *
 		(POWER_BATTERY_DIVIDER_TOP_OHMS + POWER_BATTERY_DIVIDER_BOTTOM_OHMS)) /
@@ -65,6 +72,7 @@ uint8_t PowerMonitor_Update(void)
 	}
 	else
 	{
+		/* 简单一阶 IIR 滤波，降低电机开关噪声造成的低压误判。 */
 		g_batteryMv =
 			(g_batteryMv * POWER_ADC_FILTER_WEIGHT + batteryMv) /
 			(POWER_ADC_FILTER_WEIGHT + 1UL);

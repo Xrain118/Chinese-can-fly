@@ -1,3 +1,9 @@
+        /*
+         * 本机预设和整车配置同步。
+         *
+         * 预设 JSON 是浏览器侧的调参快照；真正车端参数以 STM32 回读的 CFG 帧为准。
+         * 批量下发时逐条等待 OK/ERR，并且第一条永远是 STOP，避免改参数时车辆继续跑。
+         */
         "use strict";
 
         const CONFIG_BAUD_RATES = [9600, 19200, 38400, 57600, 115200];
@@ -28,6 +34,7 @@
         }
 
         function configNumber(value, path, minimum, maximum, integerOnly = false) {
+            /* 所有导入/本地/页面来源都走同一套校验，避免不同入口保存出不同形状。 */
             if (value === null || value === undefined || String(value).trim() === "") {
                 throw new Error(path + " 不能为空");
             }
@@ -311,6 +318,7 @@
         }
 
         function storePresetConfiguration(configuration) {
+            /* localStorage 只保存通过 validateConfiguration 规范化后的当前版本对象。 */
             const normalized = validateConfiguration({ ...configuration, savedAt: new Date().toISOString() });
             const record = {
                 storageVersion: 1,
@@ -408,6 +416,7 @@
         }
 
         async function captureDeviceConfigurationAsPreset() {
+            /* 捕获实车参数必须等待 CFG，单独 S 帧只代表运行快照，不代表配置完整。 */
             if (!presetDialogOpen) openPresetDialog();
             if (!vehicleSerialConnected()) {
                 setPresetStatus("error", "串口未连接", "请先连接小车，再点击本按钮读取 CFG 配置。");
@@ -471,6 +480,7 @@
         }
 
         async function sendConfigurationCommand(command) {
+            /* 单项设置成功或失败后都 GET ALL，页面始终回到“车端实际值”而不是乐观值。 */
             const result = await sendCommand(command, true);
             if (serialPort && serialPort.writable && keepReading) {
                 markDeviceConfigurationRefreshing();
@@ -511,6 +521,7 @@
         }
 
         async function applyPresetBatch() {
+            /* 批量下发期间锁住车端按钮，防止用户插入另一条命令打乱 ACK 对应关系。 */
             if (configApplyRunning) return;
             const configuration = savePresetFromDialog("预设已保存，准备下发");
             if (!configuration) return;

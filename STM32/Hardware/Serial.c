@@ -1,3 +1,9 @@
+/*
+ * USART2 蓝牙/树莓派串口。
+ *
+ * RX 使用中断环形缓冲，协议任务按行消费；TX 不在这里排队，必须通过
+ * ProtocolTx/SerialTxTask 串行发送，避免多个任务同时 printf 打乱协议帧。
+ */
 #include "Serial.h"
 #include "BoardPins.h"
 #include "BoardClock.h"
@@ -32,6 +38,7 @@ void USART2_IRQHandler(void)
 		g_rxHead = next;
 		if (next == g_rxTail)
 		{
+			/* 缓冲满时丢最旧字节，保留最新命令流，避免 ISR 阻塞控制任务。 */
 			g_rxTail = (uint16_t)((g_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
 		}
 	}
@@ -67,6 +74,7 @@ void Serial_Init(void)
 	BOARD_BT_USART->CR1 = 0U;
 	BOARD_BT_USART->CR2 = 0U;
 	BOARD_BT_USART->CR3 = 0U;
+	/* USART2 挂在 APB1，BRR 直接按板级时钟和目标波特率四舍五入计算。 */
 	BOARD_BT_USART->BRR = (BOARD_APB1_CLOCK_HZ + (SERIAL_BAUD / 2UL)) / SERIAL_BAUD;
 	BOARD_BT_USART->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE |
 						 USART_CR1_UE;

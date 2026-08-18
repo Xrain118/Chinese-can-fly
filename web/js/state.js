@@ -1,3 +1,9 @@
+        /*
+         * 调试台全局状态和 DOM 引用。
+         *
+         * 页面没有打包器，所有 js 文件共享同一个 script 作用域；因此跨文件变量
+         * 集中放在这里，后续 serial/telemetry/ui/controls 只读写这些约定好的状态。
+         */
         "use strict";
 
         let serialPort = null;
@@ -12,6 +18,7 @@
         let isDisconnecting = false;
         let manualDisconnect = false;
         let receiveBuffer = "";
+        /* 串口写入必须串行化；Web Serial 同一时刻只能有一个 writer 持锁。 */
         let writeChain = Promise.resolve();
         let logLineCount = 0;
         let nextCommandId = 1;
@@ -87,8 +94,13 @@
         const textDecoder = new TextDecoder("utf-8");
         /* 数组下标必须与固件 AnglePID_State 的 0～5 数值完全一致。 */
         const ANGLE_STATE_NAMES = ["等待 IMU", "角度空闲", "正在转向", "到位确认", "制动保持", "IMU 故障"];
+        /* 等待 OK/ERR 的命令事务；PING/HEARTBEAT 走静默路径，不进入这里刷屏。 */
         const pendingCommands = [];
 
+        /*
+         * 固定 DOM 引用表。这里会在页面加载时一次性取齐，后续逻辑不再到处
+         * querySelector，避免 id 改动时错误散落在多个文件。
+         */
         const elements = {
             connectionChip: document.getElementById("connectionChip"),
             connectionText: document.getElementById("connectionText"),

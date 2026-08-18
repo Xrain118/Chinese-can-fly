@@ -1,3 +1,9 @@
+/*
+ * 串口下行发送队列。
+ *
+ * 多个任务都可能需要输出 OK/ERR/遥测/IMU 帧，但 USART 只能按字节顺序发送。
+ * 本文件把完整协议行先排队，再由 SerialTxTask 独占串口 TX，防止半行交错。
+ */
 #include "ProtocolTx.h"
 #include "Serial.h"
 #include "FreeRTOS.h"
@@ -31,6 +37,7 @@ static void ProtocolTx_CopyText(ProtocolTx_Line *line, const char *text)
 		line->text[0] = '\0';
 		return;
 	}
+	/* 队列里保存完整拷贝，调用方的栈上格式化缓冲区返回后也安全。 */
 	while ((text[index] != '\0') && (index < (PROTOCOL_TX_LINE_SIZE - 1U)))
 	{
 		line->text[index] = text[index];
@@ -92,6 +99,7 @@ void ProtocolTx_RunSerialTask(void)
 {
 	ProtocolTx_Line line;
 
+	/* 唯一真正调用 Serial_SendString 的任务；其他任务只投递完整行。 */
 	for (;;)
 	{
 		if (xQueueReceive(g_txQueue, &line, portMAX_DELAY) == pdPASS)

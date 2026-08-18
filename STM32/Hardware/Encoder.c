@@ -1,3 +1,9 @@
+/*
+ * 四路正交编码器采集。
+ *
+ * 每个轮子独占一个硬件定时器的 encoder mode。本文件把 16 位硬件计数
+ * 延展成带方向符号的 int32 累计计数；速度换算在 DriveControl 中完成。
+ */
 #include "Encoder.h"
 #include "BoardPins.h"
 
@@ -42,6 +48,7 @@ static void Encoder_InitPins(GPIO_TypeDef *port, uint8_t pinA, uint8_t pinB, uin
 
 static void Encoder_InitTimer(TIM_TypeDef *timer)
 {
+	/* SMS=011：定时器由 TI1/TI2 正交编码输入驱动，CNT 随轮子转动自动增减。 */
 	timer->CR1 = 0U;
 	timer->PSC = 0U;
 	timer->ARR = 0xFFFFU;
@@ -66,6 +73,7 @@ static void Encoder_Bind(Encoder_Channel *channel, TIM_TypeDef *timer, int8_t si
 static int32_t Encoder_Read(Encoder_Channel *channel)
 {
 	uint16_t current = (uint16_t)channel->timer->CNT;
+	/* int16_t 差分天然处理 16 位计数器回绕，只要单周期增量不超过半圈范围。 */
 	int16_t delta = (int16_t)(current - channel->previous);
 	channel->previous = current;
 	channel->total += (int32_t)delta * channel->sign;

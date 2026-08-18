@@ -1,3 +1,9 @@
+/*
+ * FreeRTOS 应用钩子。
+ *
+ * 本工程使用静态任务分配，IdleTask 的内存由这里提供。栈溢出、malloc 失败
+ * 和 assert 都进入停机现场，避免控制系统在未知状态下继续驱动车辆。
+ */
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -31,6 +37,7 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *taskName)
 
 void vApplicationMallocFailedHook(void)
 {
+	/* 理论上工程不依赖 heap；如果仍触发，说明某处引入了动态分配。 */
 	taskDISABLE_INTERRUPTS();
 	for (;;)
 	{

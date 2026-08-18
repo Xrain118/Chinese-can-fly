@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# ROS2 到 STM32 文本串口协议的桥接节点。
+#
+# 节点订阅 /cmd_vel，把线速度/角速度换算为左右 PWM 周期下发；同时发布
+# STM32 遥测、故障、电池、急停和原始 IMU。所有会改变底盘运行状态的操作
+# 都要经过 STM32 的 OK/ERR ACK，避免 ROS2 侧误以为车辆已经执行命令。
+
 import threading
 import time
 import math
@@ -19,6 +25,8 @@ from .protocol import parse_ack, parse_bool_field, parse_frame, parse_int_field,
 
 
 class PendingAck:
+    # 等待某个命令 ACK 的小对象，由串口读线程唤醒服务回调线程。
+
     def __init__(self) -> None:
         self.event = threading.Event()
         self.success = False
@@ -26,6 +34,8 @@ class PendingAck:
 
 
 class UgVSerialBridge(Node):
+    # 单节点桥接：一个读线程负责串口输入，ROS2 timer 负责周期输出 PWM。
+
     def __init__(self) -> None:
         super().__init__("ugv_serial_bridge")
         self.declare_parameter("port", "/dev/serial0")
@@ -47,6 +57,7 @@ class UgVSerialBridge(Node):
             raise ValueError("command_rate_hz and cmd_vel_timeout_s must be positive")
 
         self._serial: Optional[serial.Serial] = None
+        # serial_lock 保护串口对象生命周期；pending_lock 保护 ACK 等待表。
         self._serial_lock = threading.Lock()
         self._pending_lock = threading.Lock()
         self._pending: Dict[str, PendingAck] = {}
@@ -69,6 +80,7 @@ class UgVSerialBridge(Node):
         self._reader.start()
 
     def _connect(self) -> bool:
+        # 确保串口已打开；失败时让读线程稍后重试。
         if self._serial is not None and self._serial.is_open:
             return True
         try:
@@ -76,6 +88,7 @@ class UgVSerialBridge(Node):
             with self._serial_lock:
                 self._serial = connection
             self.get_logger().info(f"Connected to STM32 on {self._port} at {self._baud} baud")
+            # 连接恢复后先拉一次整车状态，给上层话题和日志一个同步点。
             self._write_line("GET ALL")
             return True
         except (SerialException, OSError) as exc:
@@ -83,6 +96,7 @@ class UgVSerialBridge(Node):
             return False
 
     def _disconnect(self) -> None:
+        # 断开串口并解除 armed，防止重连前继续认为底盘可控。
         self._disarm()
         with self._serial_lock:
             connection = self._serial
@@ -94,6 +108,7 @@ class UgVSerialBridge(Node):
                 pass
 
     def _write_line(self, command: str) -> bool:
+        # 写一行 ASCII 命令；写失败会主动断链并让读线程重连。
         payload = (command.strip() + "\r\n").encode("ascii")
         with self._serial_lock:
             connection = self._serial
@@ -108,14 +123,17 @@ class UgVSerialBridge(Node):
         return False
 
     def _disarm(self) -> None:
+        # ROS2 侧解除运行授权；STM32 仍由自身安全链负责最终停车。
         self._armed = False
         self._requested_pwm = (0, 0)
 
     def _command_with_ack(self, command: str, ack_name: str, timeout: float = 0.6) -> Tuple[bool, str]:
+        # 发送命令并等待指定 C 字段的 OK/ERR，服务回调用它同步返回结果。
         pending = PendingAck()
         key = ack_name.upper()
         with self._pending_lock:
             if key in self._pending:
+                # 同名命令同时等待会让 ACK 无法区分归属，直接拒绝第二个请求。
                 return False, "command already pending"
             self._pending[key] = pending
         try:
@@ -129,6 +147,7 @@ class UgVSerialBridge(Node):
                 self._pending.pop(key, None)
 
     def _reader_loop(self) -> None:
+        # 后台读线程：负责自动重连、按行读取、把 ACK/遥测分发出去。
         while not self._stop_reader.is_set():
             if not self._connect():
                 self._stop_reader.wait(1.0)
@@ -143,6 +162,7 @@ class UgVSerialBridge(Node):
                 self._disconnect()
 
     def _handle_line(self, line: str) -> None:
+        # 处理 STM32 的一行输出；ACK 优先结算，遥测再发布到 ROS2。
         if not line:
             return
         raw_message = String()
@@ -175,6 +195,7 @@ class UgVSerialBridge(Node):
                 message.data = faults
                 self._fault_pub.publish(message)
                 if faults != 0:
+                    # STM32 已经锁存故障，ROS2 侧停止继续下发旧的运动需求。
                     self._disarm()
         if "BV" in fields:
             battery_mv = parse_int_field(fields, "BV")
@@ -194,6 +215,7 @@ class UgVSerialBridge(Node):
                 self._estop_pub.publish(message)
 
     def _publish_imu(self, fields: Dict[str, str], line: str) -> None:
+        # 把 I 帧原始计数转换成 sensor_msgs/Imu 的 SI 单位原始数据。
         required = ("AX", "AY", "AZ", "GX", "GY", "GZ")
         if any(key not in fields for key in required):
             self.get_logger().warning(f"Incomplete STM32 IMU frame: {line}")
@@ -218,6 +240,7 @@ class UgVSerialBridge(Node):
             self.get_logger().warning(f"Malformed STM32 IMU frame: {line}")
 
     def _on_cmd_vel(self, message: Twist) -> None:
+        # 缓存最新速度指令；真正下发由固定频率 timer 完成。
         self._requested_pwm = twist_to_pwm(
             message.linear.x,
             message.angular.z,
@@ -227,6 +250,7 @@ class UgVSerialBridge(Node):
         self._last_cmd_time = time.monotonic()
 
     def _command_timer(self) -> None:
+        # 运行期周期下发 PWM；cmd_vel 超时后主动发 0，而不是沿用旧速度。
         if not self._armed:
             return
         if (time.monotonic() - self._last_cmd_time) > self._cmd_timeout:
@@ -241,6 +265,7 @@ class UgVSerialBridge(Node):
         return response
 
     def _on_start(self, _request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
+        # 启动前先尝试清故障；START 成功后才进入 armed 周期输出。
         cleared, message = self._command_with_ack("FAULT CLEAR", "FAULT")
         if not cleared:
             response.success = False

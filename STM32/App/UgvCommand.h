@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+/* 协议层解析后的命令类型；ControlTask 再根据 type 调用对应控制模块。 */
 typedef enum
 {
 	UGV_COMMAND_START = 0,
@@ -27,12 +28,16 @@ typedef enum
 typedef struct
 {
 	UgvCommand_Type type;
+	/* OK/ERR 回包中的 C 字段名称，保持和上位机等待的命令名一致。 */
 	char responseName[16];
+	/* 通用整数参数槽：左右 PWM、模式值、CPS、限幅等都复用这里。 */
 	int32_t first;
 	int32_t second;
 	int32_t third;
+	/* 浮点参数槽：当前用于速度 PI 和同步 P。 */
 	float kp;
 	float ki;
+	/* 开关类命令统一使用 enabled。 */
 	uint8_t enabled;
 } UgvCommand;
 

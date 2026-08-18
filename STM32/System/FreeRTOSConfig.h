@@ -4,6 +4,7 @@
 #include "BoardClock.h"
 #include <stdint.h>
 
+/* FreeRTOS 裁剪配置：只保留本工程用到的静态任务、队列和周期延时能力。 */
 extern void vAssertCalled(const char *file, uint32_t line);
 
 #define configUSE_PREEMPTION                    1

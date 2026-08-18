@@ -1,3 +1,9 @@
+        /*
+         * 页面渲染和命令反馈。
+         *
+         * 本文件不直接读串口，只根据 state/telemetry/serial 提供的状态刷新 UI。
+         * 命令 toast 也是一种事务视图：发送、等待 OK/ERR、超时或断链都会在这里结算。
+         */
         "use strict";
 
         function timeText() {
@@ -6,6 +12,7 @@
         }
 
         function appendLog(direction, text, type = direction.toLowerCase()) {
+            /* 串口终端只保留最近 MAX_LOG_LINES 行，长时间试车不会拖慢 DOM。 */
             const line = document.createElement("div");
             line.className = "log-line " + type;
 
@@ -35,6 +42,7 @@
         }
 
         function emitPidChartMessage(message, directTarget = null) {
+            /* 图表窗口可能是 window.open，也可能靠 BroadcastChannel；两条路都尽量通知。 */
             if (directTarget && typeof directTarget.postMessage === "function") {
                 try { directTarget.postMessage(message, "*"); } catch (error) { /* 页面可能刚刚关闭。 */ }
             }
@@ -60,6 +68,7 @@
             Object.entries(values).forEach(([rawKey, rawValue]) => {
                 const key = String(rawKey).trim().toUpperCase();
                 if (!key || (source === "telemetry" && key === "SENS")) return;
+                /* 短字段已有长别名时不重复发一条曲线，避免图表里同一量出现两份。 */
                 const fullAlias = PID_CHART_ALIAS_KEYS[source]?.[key];
                 if (fullAlias && values[fullAlias] !== undefined) return;
                 if (String(rawValue).trim() === "") return;
@@ -73,6 +82,7 @@
             const numericValues = chartNumericValues(source, values);
 
             if (source === "telemetry") {
+                /* 派生曲线只用于观察调参，不回写页面或固件。 */
                 Object.assign(pidTelemetryState, numericValues);
                 if (values.SENS !== undefined) {
                     const sensorBits = String(values.SENS).replace(/[^01]/g, "").padEnd(8, "0").slice(0, 8);
@@ -149,6 +159,7 @@
         }
 
         function beginCommandFeedback(command) {
+            /* 每条非静默命令都会生成一个事务，等待对应 OK/ERR 或超时结算。 */
             const toast = document.createElement("div");
             toast.className = "command-toast pending";
             toast.setAttribute("role", "status");
@@ -220,6 +231,7 @@
 
         function settlePendingCommand(success, line, responseCommandName = "") {
             const expected = String(responseCommandName).toUpperCase();
+            /* 优先按 C 字段匹配；旧固件若没回 C，则退化为最早 pending 命令。 */
             let transaction = expected
                 ? pendingCommands.find(item => item.expectedName === expected)
                 : null;
@@ -249,6 +261,7 @@
         }
 
         function setConnectionState(connected, message, reconnecting = false) {
+            /* 连接态会联动所有车端命令按钮，避免离线时继续排队危险命令。 */
             elements.connectionChip.classList.toggle("connected", connected);
             elements.connectionChip.classList.toggle("reconnecting", !connected && reconnecting);
             elements.connectionText.textContent = message || (connected ? "已连接" : "未连接");
@@ -277,6 +290,7 @@
         }
 
         function setRunState(running) {
+            /* RUN 状态来自车端回读；只有车端确认运行后页面才开始发心跳。 */
             const isRunning = Number(running) === 1 || String(running).toUpperCase() === "RUN";
             elements.runState.textContent = isRunning ? "RUN" : "STOP";
             elements.runState.classList.toggle("running", isRunning);
@@ -344,6 +358,7 @@
         }
 
         function renderLiveControlChain() {
+            /* 控制链展示真实回读值：目标 CPS、实测 CPS、最终 PWM 分开看。 */
             const targetLeft = document.getElementById("targetLeft").textContent;
             const targetRight = document.getElementById("targetRight").textContent;
             const encoderLeft = document.getElementById("encoderLeft").textContent;

@@ -1,3 +1,9 @@
+/*
+ * ICM42688 IMU SPI 驱动。
+ *
+ * 固件只读取原始加速度/角速度/温度，不在 MCU 上融合姿态角。数据就绪由 INT1
+ * 外部中断置位，ControlTask 看到标志后再通过 SPI 读一帧原始样本。
+ */
 #include "ICM42688.h"
 #include "BoardPins.h"
 #include "Delay.h"
@@ -42,6 +48,7 @@ static void ICM42688_Select(uint8_t selected)
 
 static uint8_t ICM42688_Transfer(uint8_t value)
 {
+	/* SPI2 使用 8 位访问 DR，避免 16 位写入导致一次多发一个无效字节。 */
 	while ((BOARD_IMU_SPI->SR & SPI_SR_TXE) == 0U)
 	{
 	}
@@ -153,6 +160,7 @@ uint8_t ICM42688_Init(void)
 	}
 
 	ICM42688_WriteRegister(ICM42688_REG_INT_CONFIG, ICM42688_INT1_PUSH_PULL_HIGH);
+	/* 0x06 配置为 1 kHz ODR，量程保持 FS_SEL=0：加速度 +/-16g，陀螺 +/-2000dps。 */
 	ICM42688_WriteRegister(ICM42688_REG_GYRO_CONFIG0, ICM42688_ODR_1KHZ);
 	ICM42688_WriteRegister(ICM42688_REG_ACCEL_CONFIG0, ICM42688_ODR_1KHZ);
 	/* Datasheet requires INT_ASYNC_RESET (INT_CONFIG1 bit 4) to be cleared. */
@@ -174,6 +182,7 @@ uint8_t ICM42688_ReadSample(ICM42688_RawSample *sample)
 {
 	uint8_t raw[14];
 	if (sample == 0) return 0U;
+	/* 从温度高字节开始连续读 14 字节，保持同一时刻的六轴数据一致。 */
 	ICM42688_ReadRegisters(ICM42688_REG_TEMP_DATA1, raw, sizeof(raw));
 	sample->temperature = ICM42688_Combine(&raw[0]);
 	sample->accelX = ICM42688_Combine(&raw[2]);

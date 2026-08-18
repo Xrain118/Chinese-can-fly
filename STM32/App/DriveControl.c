@@ -1,3 +1,10 @@
+/*
+ * 车端运动控制核心。
+ *
+ * 上层只提交“想要的左右 PWM / 模式 / 编码器参数”，本文件负责把这些需求
+ * 合成为最终写给电机驱动的 PWM。状态只由 ControlTask 串行访问，其他任务
+ * 通过快照读取，避免在 FreeRTOS 多任务下出现半更新的车体状态。
+ */
 #include "DriveControl.h"
 #include "SimplePID.h"
 #include "Encoder.h"
@@ -110,6 +117,7 @@ static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
 		return;
 	}
 
+	/* 编码器计数器持续累加，这里只关心本控制周期的增量并换算成每秒计数 CPS。 */
 	leftFrontDelta = lf - g_drive.previousLeftFrontCount;
 	leftRearDelta = lr - g_drive.previousLeftRearCount;
 	rightFrontDelta = rf - g_drive.previousRightFrontCount;
@@ -142,6 +150,7 @@ static int16_t DriveControl_UpdateSpeedCorrection(SimplePID *pid,
 {
 	if (desiredPwm == 0)
 	{
+		/* 目标为 0 时清积分，防止停车后再次启动带着上一次误差冲出去。 */
 		SimplePID_Reset(pid);
 		return 0;
 	}
@@ -206,6 +215,10 @@ static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 	int16_t rightCorrection;
 	int16_t syncCorrection;
 
+	/*
+	 * 闭环目标不是直接来自上位机速度单位，而是先把当前 PWM 需求按满量程 CPS
+	 * 映射成左右目标轮速。这样 DIRECT 和 STRAIGHT 两种模式共用同一套速度 PI。
+	 */
 	g_drive.snapshot.leftTargetCps =
 		DriveControl_CommandToCps(g_drive.snapshot.desiredLeftPwm);
 	g_drive.snapshot.rightTargetCps =
@@ -248,6 +261,7 @@ static void DriveControl_UpdateSpeedPi(uint16_t elapsedMs, float dtSeconds)
 
 void DriveControl_LoadDefaults(void)
 {
+	/* 默认保持开环、停车和保守 PI 参数，避免刚刷机上电就进入闭环输出。 */
 	g_drive.snapshot.running = 0U;
 	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
 	g_drive.snapshot.encoderClosed = 0U;
@@ -337,6 +351,7 @@ uint8_t DriveControl_SetSpeed(int16_t speed)
 	g_drive.snapshot.speed = speed;
 	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
 	{
+		/* STRAIGHT 模式把 SPEED 同时分配给左右轮；DIRECT 模式仅保存基准速度值。 */
 		previousLeft = g_drive.snapshot.desiredLeftPwm;
 		previousRight = g_drive.snapshot.desiredRightPwm;
 		g_drive.snapshot.desiredLeftPwm = speed;
@@ -363,6 +378,7 @@ uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm)
 	{
 		return 0U;
 	}
+	/* PWM/MOVE 是显式左右轮命令，收到后立即切回 DIRECT，避免被 SPEED 自动覆盖。 */
 	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
 	g_drive.snapshot.desiredLeftPwm = leftPwm;
 	g_drive.snapshot.desiredRightPwm = rightPwm;
@@ -380,6 +396,7 @@ uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm)
 void DriveControl_SetEncoderClosed(uint8_t enabled)
 {
 	g_drive.snapshot.encoderClosed = (enabled != 0U) ? 1U : 0U;
+	/* 开关速度环时重新同步编码器基准，首帧不用于闭环修正。 */
 	SimplePID_Reset(&g_drive.leftSpeedPid);
 	SimplePID_Reset(&g_drive.rightSpeedPid);
 	g_drive.encoderSynchronized = 0U;
@@ -457,6 +474,7 @@ void DriveControl_Update(uint16_t elapsedMs)
 
 	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
 	{
+		/* STRAIGHT 的左右目标每周期都由 speed 刷新，保证 SPEED 后发时立即生效。 */
 		g_drive.snapshot.desiredLeftPwm = g_drive.snapshot.speed;
 		g_drive.snapshot.desiredRightPwm = g_drive.snapshot.speed;
 	}

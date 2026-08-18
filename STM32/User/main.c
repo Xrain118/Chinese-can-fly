@@ -1,3 +1,9 @@
+/*
+ * 固件入口。
+ *
+ * main 只做一次性初始化和任务创建；车辆运行后的闭环控制、协议收发和遥测
+ * 都在 FreeRTOS 任务中完成。读启动流程时按这里的调用顺序往下追即可。
+ */
 #include "stm32f4xx.h"
 #include "BoardClock.h"
 #include "SystemTick.h"

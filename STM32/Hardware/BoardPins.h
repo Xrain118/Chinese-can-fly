@@ -4,8 +4,10 @@
 #include "stm32f4xx.h"
 
 /*
- * SkyStar STM32F407VET6 carrier board pin map.
- * Vehicle orientation: P1 on the left, P2 on the right, USB toward the rear.
+ * SkyStar STM32F407VET6 载板引脚总表。
+ *
+ * 这里是硬件连线的唯一代码来源：驱动文件只引用这些宏，不在各处重复写端口。
+ * 车体方向约定为 P1 在左、P2 在右、USB 朝车尾；改线时优先同步本文件和 docs。
  */
 
 /*
@@ -33,7 +35,7 @@
 #define BOARD_MOTOR_RR_IN2_PIN       8U
 #define BOARD_MOTOR_RIGHT_STBY_PIN   10U /* PE9/PE11 are used by LF encoder. */
 
-/* Encoder AB pairs. Forward count polarity is adjusted in Encoder.h. */
+/* 编码器 AB 相引脚；前进计数正负不在这里改，统一在 Encoder.h 的 SIGN 中校准。 */
 #define BOARD_ENCODER_LF_PORT        GPIOE
 #define BOARD_ENCODER_LF_A_PIN       9U
 #define BOARD_ENCODER_LF_B_PIN       11U
@@ -58,7 +60,7 @@
 #define BOARD_ENCODER_RR_AF          3U
 #define BOARD_ENCODER_RR_TIM         TIM8
 
-/* Safety inputs and power monitoring. */
+/* 安全输入和电池采样；PE12 是软件急停，不能替代物理断电急停。 */
 #define BOARD_ESTOP_PORT             GPIOE
 #define BOARD_ESTOP_PIN              12U
 #define BOARD_ESTOP_ACTIVE_LEVEL     0U
@@ -70,7 +72,7 @@
 
 /* PE13..PE15 remain free for payload release or future expansion IO. */
 
-/* ICM-42688-P on SPI2. */
+/* ICM-42688-P 接 SPI2，INT1 接 EXTI9 用于数据就绪提示。 */
 #define BOARD_IMU_SPI                SPI2
 #define BOARD_IMU_SPI_PORT           GPIOB
 #define BOARD_IMU_SCK_PIN            13U
@@ -82,7 +84,7 @@
 #define BOARD_IMU_INT_PORT           GPIOD
 #define BOARD_IMU_INT_PIN            9U
 
-/* Raspberry Pi motion and telemetry link on USART2. */
+/* 树莓派/蓝牙透传共用 USART2 文本协议链路。 */
 #define BOARD_BT_USART               USART2
 #define BOARD_BT_PORT                GPIOD
 #define BOARD_BT_TX_PIN              5U

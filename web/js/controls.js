@@ -1,6 +1,13 @@
+        /*
+         * 页面控件事件绑定。
+         *
+         * 这里把按钮/输入转换成串口命令或本地显示操作。真正发送由 serial.js 完成，
+         * 命令是否被小车接受由 telemetry.js 收到 OK/ERR 后结算。
+         */
         "use strict";
 
         function rangedInput(id, minimum, maximum, integerOnly = false) {
+            /* 浏览器端先拦截明显越界值，减少固件反复返回 ERR ARG 的试错成本。 */
             const input = document.getElementById(id);
             const number = Number(input.value);
             if (input.value.trim() === "" || !Number.isFinite(number)) {
@@ -22,6 +29,7 @@
         }
 
         function readAndValidateWeights() {
+            /* 权重控件保留给旧页面兼容；即使固件未接入，也保持原有输入校验。 */
             const weights = [];
             for (let channel = 1; channel <= 8; channel += 1) {
                 const value = rangedInput("weight" + channel, -10000, 10000, true);
@@ -41,6 +49,7 @@
         }
 
         elements.consoleTabs.forEach((tab, index) => {
+            /* 页签支持键盘左右切换，保持调参现场不一定要用鼠标。 */
             tab.addEventListener("click", () => showConsolePage(tab.dataset.page));
             tab.addEventListener("keydown", event => {
                 if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -60,6 +69,7 @@
             writeStoredSetting(BAUD_RATE_STORAGE_KEY, elements.baudRate.value);
         });
         elements.autoReconnect.addEventListener("change", () => {
+            /* 用户重新打开自动重连时，立即尝试恢复已授权串口。 */
             writeStoredSetting(AUTO_RECONNECT_STORAGE_KEY, elements.autoReconnect.checked ? "1" : "0");
             reconnectAttempt = 0;
             clearReconnectTimer();
@@ -276,6 +286,7 @@
         });
 
         async function restoreGrantedSerialPort() {
+            /* 页面刚打开时只能自动恢复唯一已授权串口；多个授权口必须让用户确认。 */
             if (!autoReconnectEnabled()) return;
             try {
                 const grantedPorts = await navigator.serial.getPorts();

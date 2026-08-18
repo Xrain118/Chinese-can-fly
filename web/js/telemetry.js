@@ -1,3 +1,9 @@
+        /*
+         * STM32 上行帧解析和页面数据回填。
+         *
+         * 固件输出 T/S/CFG/I/OK/ERR 文本帧：这里负责把短字段扩展为页面语义名，
+         * 再分发到 UI、预设同步和 PID 图表。这里不直接发送任何控制命令。
+         */
         "use strict";
 
         function parseKeyValues(payload) {
@@ -16,6 +22,7 @@
         function expandKeyAliases(values, aliases) {
             const expanded = { ...values };
             Object.entries(aliases).forEach(([shortName, fullName]) => {
+                /* 如果固件同时发短字段和长字段，长字段优先，便于以后平滑扩展协议。 */
                 if (expanded[fullName] === undefined && values[shortName] !== undefined) {
                     expanded[fullName] = values[shortName];
                 }
@@ -59,6 +66,7 @@
                 return;
             }
 
+            /* Yaw/Roll/Pitch 可能跨 0/360，continuous 用最短角差展开成连续曲线。 */
             tracker.continuous += angleDelta(nextValue, tracker.raw);
             tracker.raw = nextValue;
         }
@@ -156,6 +164,7 @@
         }
 
         function applyWheelAndSyncTelemetry(values) {
+            /* 四轮 CPS、左右平均 CPS、目标 CPS 和同步修正都来自同一帧快照。 */
             const fieldIds = {
                 PWM_L: "pwmLeft",
                 PWM_R: "pwmRight",
@@ -189,6 +198,7 @@
         }
 
         function applyTelemetry(values) {
+            /* T 帧是周期运行遥测：更新实时值，但不认为配置已同步。 */
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
             /* 旧页面仍能接收 AH/AE/AO/AS/AR；当前 F407 固件通常不发送这些角度字段。 */
@@ -205,6 +215,7 @@
         }
 
         function applyImu(values) {
+            /* 当前 F407 只发原始六轴计数，页面显示为原始 IMU 数据，不推导姿态角。 */
             const accel = [values.ACCEL_X, values.ACCEL_Y, values.ACCEL_Z].map(Number);
             const gyro = [values.GYRO_X, values.GYRO_Y, values.GYRO_Z].map(Number);
             if (!accel.every(Number.isFinite) || !gyro.every(Number.isFinite)) return;
@@ -257,6 +268,7 @@
         }
 
         function applyConfig(values) {
+            /* CFG 是 GET ALL 的配置完成点；收到它才允许预设捕获/回读状态结算。 */
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
             if (values.ENC_SYNC_ENABLED !== undefined) {
                 setEncoderSyncState(values.ENC_SYNC_ENABLED, values.ENC_SYNC_ACTIVE ?? encoderSyncActive);
@@ -281,6 +293,7 @@
             const firstSpace = line.indexOf(" ");
             const prefix = (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase();
             const payload = firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim();
+            /* OK/ERR 的 C 字段用于匹配 pendingCommands，心跳回执静默吞掉。 */
             const responseValues = (prefix === "OK" || prefix === "ERR") ? parseKeyValues(payload) : {};
             const responseCommand = responseValues.CMD ?? responseValues.C;
             const silentHeartbeatResponse =
@@ -348,6 +361,7 @@
         }
 
         function consumeReceivedText(text) {
+            /* 串口数据可能任意分块到达，先累积到换行再交给 processLine。 */
             receiveBuffer += text;
             if (receiveBuffer.length > MAX_RECEIVE_BUFFER) {
                 appendLog("ERR", "接收行超过缓冲区上限，已丢弃未结束数据", "err");

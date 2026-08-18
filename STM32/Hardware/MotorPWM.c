@@ -1,3 +1,9 @@
+/*
+ * 电机 PWM 底层。
+ *
+ * TIM5 四个通道分别接四个 TB6612 PWM 输入，频率固定为 MOTOR_PWM_HZ。
+ * 上层统一使用 0..1000 的千分比占空比，不直接暴露定时器计数值。
+ */
 #include "MotorPWM.h"
 #include "BoardPins.h"
 #include "BoardClock.h"
@@ -43,6 +49,7 @@ void MotorPWM_Init(void)
 	MotorPWM_SetAlternateFunction(BOARD_MOTOR_PWM_PORT, BOARD_MOTOR_RR_PWM_PIN,
 								  BOARD_MOTOR_PWM_AF);
 
+	/* TIM5 不分频，ARR 由板级 APB1 定时器时钟和目标 PWM 频率计算。 */
 	TIM5->CR1 = 0U;
 	TIM5->PSC = 0U;
 	TIM5->ARR = MOTOR_PWM_PERIOD_COUNTS - 1UL;
@@ -67,6 +74,7 @@ void MotorPWM_SetDuty(uint8_t channel, uint16_t dutyPermille)
 	{
 		dutyPermille = MOTOR_PWM_DUTY_MAX;
 	}
+	/* dutyPermille=1000 表示满占空比，方便和车端 PWM 命令范围保持一致。 */
 	compare = (MOTOR_PWM_PERIOD_COUNTS * dutyPermille) / MOTOR_PWM_DUTY_MAX;
 	if (channel == 1U)
 	{

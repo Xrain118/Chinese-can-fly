@@ -1,3 +1,9 @@
+/*
+ * 极简 PI 控制器。
+ *
+ * DriveControl 左右速度环各持有一个实例。这里不做参数范围校验，范围由
+ * DriveControl_SetEncoderGains/Limit 负责；本层只保证积分和输出不会越过限幅。
+ */
 #include "SimplePID.h"
 
 static float SimplePID_Abs(float value)
@@ -77,6 +83,7 @@ float SimplePID_Update(SimplePID *pid, float error, float dtSeconds)
 		dtSeconds = 0.001f;
 	}
 
+	/* 积分先限幅再参与输出，避免长时间误差积累后产生明显 windup。 */
 	pid->integral += error * dtSeconds;
 	pid->integral = SimplePID_Clamp(pid->integral, pid->outputLimit);
 

@@ -1,3 +1,9 @@
+        /*
+         * 页面启动入口。
+         *
+         * 前面的脚本只声明状态和函数，本文件按顺序恢复本地设置、注册浏览器事件、
+         * 初始化默认显示，并尝试恢复已授权串口。
+         */
         "use strict";
 
         const savedBaudRate = readStoredSetting(BAUD_RATE_STORAGE_KEY, "115200");
@@ -7,6 +13,7 @@
         elements.autoReconnect.checked = readStoredSetting(AUTO_RECONNECT_STORAGE_KEY, "1") !== "0";
         showConsolePage(readStoredSetting(CONSOLE_PAGE_STORAGE_KEY, "motion"), false, false);
 
+        /* PID 图表可能是独立窗口，启动时先建立跨窗口同步通道。 */
         try {
             pidChartChannel = new BroadcastChannel(PID_CHART_CHANNEL_NAME);
             pidChartChannel.addEventListener("message", event => {
@@ -19,6 +26,7 @@
             if (event.data?.type === "tracking-debugger:chart-ready") sendPidChartSnapshot(event.source);
         });
 
+        /* Web Serial 事件只在支持的桌面浏览器里存在；不支持时页面仍可离线看预设。 */
         if ("serial" in navigator) {
             navigator.serial.addEventListener("connect", event => {
                 const connectedPort = event.port || event.target;
@@ -40,6 +48,7 @@
             elements.connectButton.disabled = true;
         }
 
+        /* 离开页面时主动取消 reader 和关闭 BroadcastChannel，减少浏览器残留锁。 */
         window.addEventListener("beforeunload", () => {
             manualDisconnect = true;
             clearReconnectTimer();
@@ -48,6 +57,7 @@
             if (pidChartChannel) pidChartChannel.close();
         });
 
+        /* 周期刷新“最后遥测”和 IMU 超时视觉状态，不依赖车端每秒都发特殊帧。 */
         window.setInterval(() => {
             const now = Date.now();
             const age = document.getElementById("telemetryAge");
@@ -64,6 +74,7 @@
             }
         }, 1000);
 
+        /* 首屏默认值全部从同一套渲染函数走，避免 HTML 初始文案和 JS 状态分叉。 */
         resetVehicleYawReference();
         setSensorBits("00000000");
         setDriveMode(0);

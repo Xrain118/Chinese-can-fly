@@ -1,3 +1,10 @@
+/*
+ * FreeRTOS 任务编排层。
+ *
+ * 这里把整车运行拆成四条固定职责：控制任务处理命令/安全/电机，
+ * 协议任务只读串口 RX，遥测任务只发快照，串口任务只写 TX。
+ * 这种分工让“谁可以改车状态”非常明确，读代码时先从 ControlTask 看起。
+ */
 #include "UgvTasks.h"
 #include "DebugProtocol.h"
 #include "DriveControl.h"
@@ -80,6 +87,7 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 		break;
 
 	case UGV_COMMAND_GET_ALL:
+		/* GET ALL 不进入 DriveControl，只要求协议层回发当前运行快照和配置。 */
 		DebugProtocol_SendState();
 		break;
 
@@ -109,6 +117,7 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 		if (DriveControl_SetWheelPwm((int16_t)command->first,
 									 (int16_t)command->second) != 0U)
 		{
+			/* PWM/MOVE/SPEED 都算有效通信，用来喂运行期通信看门狗。 */
 			Safety_KickCommunication(nowMs);
 			DebugProtocol_SendOk(command->responseName);
 		}
@@ -326,6 +335,7 @@ uint8_t UgvTasks_Start(void)
 	TaskHandle_t telemetryTask;
 	TaskHandle_t serialTask;
 
+	/* 任务全部静态创建；任一创建失败都让 main 停在安全失败路径。 */
 	serialTask = xTaskCreateStatic(UgvTasks_SerialTask, "serial_tx",
 								   UGV_SERIAL_STACK_WORDS, 0,
 								   UGV_SERIAL_PRIORITY, g_serialTaskStack,

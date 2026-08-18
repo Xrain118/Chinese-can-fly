@@ -1,3 +1,10 @@
+/*
+ * STM32 文本调试协议。
+ *
+ * 串口 RX 在这里组行、归一化、解析命令，再投递到 UgvCommandQueue；
+ * 这里不直接改车状态，避免协议任务和控制任务同时写 DriveControl/Safety。
+ * 下行的 OK/ERR/T/S/CFG/I 帧统一进入 ProtocolTx 队列，由串口发送任务串行输出。
+ */
 #include "DebugProtocol.h"
 #include "DriveControl.h"
 #include "PowerMonitor.h"
@@ -62,6 +69,7 @@ static void DebugProtocol_NormalizeLine(void)
 	uint8_t index;
 	for (index = 0U; g_line[index] != '\0'; index++)
 	{
+		/* 协议对大小写不敏感；把逗号/等号也当分隔符，兼容 KEY=VALUE 和空格命令。 */
 		if ((g_line[index] >= 'a') && (g_line[index] <= 'z'))
 		{
 			g_line[index] = (char)(g_line[index] - ('a' - 'A'));
@@ -122,6 +130,7 @@ static uint8_t DebugProtocol_ParseInt(const char *text, int32_t *value)
 		negative = (*text == '-') ? 1U : 0U;
 		text++;
 	}
+	/* 不用 sscanf，避免嵌入式 C 库浮动配置差异；这里手动检查 int32 溢出。 */
 	limit = (negative != 0U) ? 2147483648UL : 2147483647UL;
 	while ((*text >= '0') && (*text <= '9'))
 	{
@@ -227,6 +236,7 @@ static void DebugProtocol_LineAppendFixed6(DebugProtocol_LineBuilder *builder,
 	int32_t integerPart;
 	int32_t fractionalPart;
 
+	/* 固件侧不依赖 printf 的 %f 支持，浮点参数统一手动格式化为 6 位小数。 */
 	if (value < 0.0f)
 	{
 		DebugProtocol_LineAppend(builder, "-");
@@ -451,6 +461,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 	}
 	if (DebugProtocol_StringEqual(tokens[1], "SYNC") != 0U)
 	{
+		/* ENC SYNC 既有开关子命令，也有参数子命令，解析顺序必须先识别 ON/OFF。 */
 		if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "ON") != 0U))
 		{
 			command.type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
@@ -637,6 +648,7 @@ static void DebugProtocol_ProcessLine(void)
 	char *tokens[DEBUG_PROTOCOL_MAX_TOKENS];
 	uint8_t count;
 
+	/* 一行命令处理完即丢弃缓存；过长行在 DebugProtocol_Run 中整行丢弃。 */
 	DebugProtocol_NormalizeLine();
 	count = DebugProtocol_Tokenize(tokens, DEBUG_PROTOCOL_MAX_TOKENS);
 	DebugProtocol_ProcessTokens(tokens, count);
@@ -653,6 +665,7 @@ void DebugProtocol_Run(void)
 {
 	uint8_t byte;
 
+	/* 本任务每 1ms 被调度一次，尽量一次取空环形缓冲，降低命令响应延迟。 */
 	while (Serial_Available() != 0U)
 	{
 		byte = Serial_ReadByte();

@@ -1,3 +1,9 @@
+        /*
+         * Web Serial 连接管理。
+         *
+         * 本文件只负责浏览器串口生命周期、读写和自动重连；收到的完整文本行交给
+         * telemetry.js 解析，命令反馈 UI 交给 ui.js 的事务函数处理。
+         */
         "use strict";
 
         function readStoredSetting(key, fallback) {
@@ -18,6 +24,7 @@
         }
 
         function showConsolePage(requestedPage, persist = true, scrollToTabs = true) {
+            /* 页签状态也落本地存储，断电重开调试台时回到上次查看的页面。 */
             const hasRequestedPage = [...elements.consolePages].some(
                 page => page.dataset.consolePage === requestedPage
             );
@@ -67,6 +74,7 @@
                     stopHeartbeat();
                     return;
                 }
+                /* 心跳只喂 STM32 通信看门狗，不进入命令 toast，避免运行时刷屏。 */
                 sendCommand("PING", false, { silent: true });
             }, HEARTBEAT_INTERVAL_MS);
         }
@@ -81,6 +89,7 @@
                 return;
             }
 
+            /* 递增退避，既能快速恢复短暂断电，也不会在设备离线时疯狂弹日志。 */
             const index = Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1);
             const delay = RECONNECT_DELAYS_MS[index];
             reconnectAttempt += 1;
@@ -99,6 +108,7 @@
 
             let port = eventPort;
             try {
+                /* Web Serial 只能自动打开用户授权过的 port；未授权时仍需用户点击选择。 */
                 const grantedPorts = await navigator.serial.getPorts();
                 if (preferredPort && grantedPorts.includes(preferredPort)) {
                     port = preferredPort;
@@ -129,6 +139,7 @@
             const wasCurrentPort = serialPort === port;
             if (!wasCurrentPort && preferredPort !== port) return;
 
+            /* 断链时清掉所有 pending 命令，避免旧 ACK 在重连后错误结算新事务。 */
             stopHeartbeat();
             keepReading = false;
             receiveBuffer = "";
@@ -155,6 +166,7 @@
             let unexpectedEnd = false;
             try {
                 while (keepReading && serialPort === port && port.readable) {
+                    /* reader 锁只在当前读循环中持有；断开时 cancel 后必须 releaseLock。 */
                     const activeReader = port.readable.getReader();
                     reader = activeReader;
                     try {
@@ -191,6 +203,7 @@
             connectAttemptPromise = (async () => {
                 const baudRate = Number(elements.baudRate.value) || 9600;
                 try {
+                    /* 打开新连接前先收尾旧 reader/loop，避免同一个 port 被两个读循环消费。 */
                     keepReading = false;
                     if (reader) await reader.cancel().catch(() => {});
                     if (readLoopPromise) await readLoopPromise.catch(() => {});
@@ -219,6 +232,7 @@
                         if (readLoopPromise === loopPromise) readLoopPromise = null;
                     });
 
+                    /* STM32 上电后可能还在吐启动诊断，稍等再 GET ALL 让配置同步更稳定。 */
                     window.setTimeout(() => {
                         if (keepReading && serialPort === port) sendCommand("GET ALL");
                     }, 180);
@@ -266,6 +280,7 @@
         }
 
         async function disconnectSerial() {
+            /* 手动断开会关闭自动重连，这是用户明确要求暂停追设备。 */
             manualDisconnect = true;
             stopHeartbeat();
             elements.autoReconnect.checked = false;
@@ -312,6 +327,10 @@
             }
 
             const commandPort = serialPort;
+            /*
+             * 所有写操作挂到 writeChain 后面，保证同一时刻只有一个 writer。
+             * waitForConfirmation 只影响返回值，不改变串口实际发送顺序。
+             */
             writeChain = writeChain.catch(() => false).then(async () => {
                 let writer = null;
                 try {
