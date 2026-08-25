@@ -506,16 +506,6 @@
               <FilePath>.\Hardware\Serial.h</FilePath>
             </File>
             <File>
-              <FileName>ICM42688.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\ICM42688.c</FilePath>
-            </File>
-            <File>
-              <FileName>ICM42688.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\ICM42688.h</FilePath>
-            </File>
-            <File>
               <FileName>PowerMonitor.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\PowerMonitor.c</FilePath>

@@ -38,9 +38,7 @@
             });
 
             if (persist) writeStoredSetting(CONSOLE_PAGE_STORAGE_KEY, pageName);
-            if (pageName === "imu" && attitudeHasData) {
-                window.requestAnimationFrame(renderAttitudeView);
-            } else if (pageName === "serial") {
+            if (pageName === "serial") {
                 window.requestAnimationFrame(() => {
                     elements.terminal.scrollTop = elements.terminal.scrollHeight;
                 });
@@ -222,7 +220,6 @@
                     manualDisconnect = false;
                     reconnectAttempt = 0;
                     receiveBuffer = "";
-                    resetVehicleYawReference();
                     setConnectionState(true, automatic ? "已自动重连" : "已连接");
                     appendLog("SYS", (automatic ? "自动重连成功：" : "串口已打开：") + baudRate + " baud，8N1", "sys");
 

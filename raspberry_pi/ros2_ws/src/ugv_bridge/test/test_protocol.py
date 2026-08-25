@@ -26,12 +26,6 @@ class ProtocolTest(unittest.TestCase):
     def test_parse_ack(self):
         self.assertEqual(parse_ack("ERR C=START,M=FAULT"), (False, "START", "FAULT"))
 
-    def test_parse_imu(self):
-        prefix, fields = parse_frame("I AX=1,AY=-2,AZ=3,GX=4,GY=5,GZ=-6")
-        self.assertEqual(prefix, "I")
-        self.assertEqual(fields["AY"], "-2")
-        self.assertEqual(fields["GZ"], "-6")
-
     def test_parse_int_field_fail_closed(self):
         fields = {"F": "0x04", "BV": "bad"}
         self.assertEqual(parse_int_field(fields, "F"), 4)

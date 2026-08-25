@@ -8,7 +8,6 @@
 #include "BoardClock.h"
 #include "SystemTick.h"
 #include "Serial.h"
-#include "ICM42688.h"
 #include "DriveControl.h"
 #include "DebugProtocol.h"
 #include "Safety.h"
@@ -18,17 +17,14 @@
 
 int main(void)
 {
-	uint8_t imuReady;
-
 	/* 上电阶段只做硬件和应用对象初始化；周期逻辑全部交给 FreeRTOS 任务。 */
 	(void)BoardClock_Init();
 	SystemTick_Init();
 	DriveControl_Init();
 	Serial_Init();
-	imuReady = ICM42688_Init();
-	Safety_Init(SystemTick_Millis(), imuReady);
+	Safety_Init(SystemTick_Millis());
 	DebugProtocol_Init();
-	UgvTasks_Init(imuReady);
+	UgvTasks_Init();
 	if (UgvTasks_Start() != 0U)
 	{
 		vTaskStartScheduler();

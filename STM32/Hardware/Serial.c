@@ -1,5 +1,5 @@
 /*
- * USART2 蓝牙/树莓派串口。
+ * USART1 蓝牙串口，连接板载 U1T/U1R（PA9/PA10）。
  *
  * RX 使用中断环形缓冲，协议任务按行消费；TX 不在这里排队，必须通过
  * ProtocolTx/SerialTxTask 串行发送，避免多个任务同时 printf 打乱协议帧。
@@ -27,7 +27,7 @@ int fputc(int character, FILE *file)
 	return character;
 }
 
-void USART2_IRQHandler(void)
+void USART1_IRQHandler(void)
 {
 	uint32_t status = BOARD_BT_USART->SR;
 	if ((status & USART_SR_RXNE) != 0U)
@@ -42,8 +42,9 @@ void USART2_IRQHandler(void)
 			g_rxTail = (uint16_t)((g_rxTail + 1U) % SERIAL_RX_BUFFER_SIZE);
 		}
 	}
-	else if ((status & USART_SR_ORE) != 0U)
+	else if ((status & (USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE)) != 0U)
 	{
+		/* 先读 SR、再读 DR 清除 USART1 的错误标志，避免错误中断持续触发。 */
 		(void)BOARD_BT_USART->DR;
 	}
 }
@@ -53,9 +54,9 @@ void Serial_Init(void)
 	uint32_t txShift = BOARD_BT_TX_PIN * 2U;
 	uint32_t rxShift = BOARD_BT_RX_PIN * 2U;
 
-	RCC->AHB1ENR |= RCC_AHB1ENR_GPIODEN;
-	RCC->APB1ENR |= RCC_APB1ENR_USART2EN;
-	(void)RCC->APB1ENR;
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;
+	(void)RCC->APB2ENR;
 
 	BOARD_BT_PORT->MODER =
 		(BOARD_BT_PORT->MODER & ~((3UL << txShift) | (3UL << rxShift))) |
@@ -74,13 +75,13 @@ void Serial_Init(void)
 	BOARD_BT_USART->CR1 = 0U;
 	BOARD_BT_USART->CR2 = 0U;
 	BOARD_BT_USART->CR3 = 0U;
-	/* USART2 挂在 APB1，BRR 直接按板级时钟和目标波特率四舍五入计算。 */
-	BOARD_BT_USART->BRR = (BOARD_APB1_CLOCK_HZ + (SERIAL_BAUD / 2UL)) / SERIAL_BAUD;
+	/* USART1 挂在 APB2，84 MHz / 9600 得到 BRR=8750（0x222E）。 */
+	BOARD_BT_USART->BRR = (BOARD_APB2_CLOCK_HZ + (SERIAL_BAUD / 2UL)) / SERIAL_BAUD;
 	BOARD_BT_USART->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE |
 						 USART_CR1_UE;
 
-	NVIC_SetPriority(USART2_IRQn, 2U);
-	NVIC_EnableIRQ(USART2_IRQn);
+	NVIC_SetPriority(USART1_IRQn, 2U);
+	NVIC_EnableIRQ(USART1_IRQn);
 }
 
 void Serial_SendByte(uint8_t byte)

@@ -3,10 +3,10 @@
 
 #include <stdint.h>
 
-#define SERIAL_BAUD           (115200UL)
+#define SERIAL_BAUD           (9600UL)
 #define SERIAL_RX_BUFFER_SIZE (128U)
 
-/* 初始化 USART2 PD5/PD6 和 RX 中断。 */
+/* 初始化板载 U1T/U1R 对应的 USART1 PA9/PA10 和 RX 中断。 */
 void Serial_Init(void);
 /* 阻塞发送 1 字节；只允许 SerialTxTask 间接调用。 */
 void Serial_SendByte(uint8_t byte);

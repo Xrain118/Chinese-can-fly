@@ -250,8 +250,7 @@
         function setVehicleCommandControlsDisabled(disabled) {
             const baseDisabled = Boolean(disabled);
             document.querySelectorAll(
-                "#startButton, #stopButton, #getAllButton, #resetButton, #defaultsButton, #trackingModeButton, #straightModeButton, #angleModeButton, " +
-                "#sendAngleTargetButton, #sendAnglePidButton, #sendAnglePwmButton, #sendAngleSettlingButton, #resetVehicleYawButton, " +
+                "#startButton, #stopButton, #getAllButton, #resetButton, #defaultsButton, #trackingModeButton, #straightModeButton, " +
                 "#sendPidButton, #sendSpeedButton, #sendLimitButton, #encoderOnButton, #encoderOffButton, " +
                 "#sendEncoderPidButton, #sendEncoderCpsButton, #sendEncoderLimitButton, #encoderSyncOnButton, #encoderSyncOffButton, #sendEncoderSyncButton, #sendAllWeightsButton, " +
                 ".send-weight, #sendManualButton, .quick-command, #refreshDeviceConfigButton"
@@ -269,7 +268,6 @@
             elements.disconnectButton.disabled = !connected;
             elements.baudRate.disabled = connected;
             setVehicleCommandControlsDisabled(!connected || configApplyRunning);
-            elements.resetVehicleYawButton.disabled = !connected || !angleControlReady;
             if (!connected) {
                 if (typeof stopHeartbeat === "function") stopHeartbeat();
                 deviceConfigurationSynchronized = false;
@@ -302,41 +300,27 @@
 
         function renderControlStrategy() {
             const isStraight = currentDriveMode === 1;
-            const isAngle = currentDriveMode === 2;
             /* 控制链按当前 F407 固件的 DIRECT/STRAIGHT 模式说明输出来源。 */
-            elements.controlStrategy.textContent = isAngle
-                ? "角度模式未接入"
-                : (isStraight ? "左右轮同速分配" : "直接 PWM");
-            elements.modeDescription.textContent = isAngle
-                ? "角度模式：当前 F407 固件未接入，页面不会发送 ANGLE 命令。"
-                : (isStraight
-                    ? "直行模式：左右轮得到相同 SPEED 指令。"
-                    : "直接模式：PWM/MOVE 直接给出左右轮目标；SPEED 不会自动分配。");
-            /* 旧循迹/角度配置区保留为页面兼容占位。 */
+            elements.controlStrategy.textContent = isStraight ? "左右轮同速分配" : "直接 PWM";
+            elements.modeDescription.textContent = isStraight
+                ? "直行模式：左右轮得到相同 SPEED 指令。"
+                : "直接模式：PWM/MOVE 直接给出左右轮目标；SPEED 不会自动分配。";
+            /* 旧循迹配置区保留为页面兼容占位。 */
             const trackingActive = currentDriveMode === 0;
             elements.trackingPidScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
             elements.trackingWeightsScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
             elements.trackingPidScope.classList.toggle("active", trackingActive);
             elements.trackingWeightsScope.classList.toggle("active", trackingActive);
-            elements.anglePidScope.textContent = isAngle ? "角度模式生效" : "当前不参与输出";
-            elements.anglePidScope.classList.toggle("active", isAngle);
-            document.getElementById("speedMeaning").textContent = isAngle
-                ? "角度模式未接入。"
-                : (isStraight ? "直行模式下 SPEED 会同时写入左右轮。" : "直接模式下请使用 PWM/MOVE。");
+            document.getElementById("speedMeaning").textContent = isStraight
+                ? "直行模式下 SPEED 会同时写入左右轮。"
+                : "直接模式下请使用 PWM/MOVE。";
 
-            /* HOLDING 状态由车端短路制动，不能显示成仍由编码器 PI 驱动。 */
-            elements.chainExecutionValue.textContent = isAngle
-                ? "角度模式未接入"
-                : (encoderLoopEnabled
-                    ? (encoderSyncEnabled ? "速度 PI + 同步 P" : "编码器 PI 修正 PWM")
-                    : "直接 PWM");
-            elements.executionDescription.textContent = isAngle
-                ? (encoderLoopEnabled
-                    ? "ENC ON：角度模式未接入，编码器设置仍保留。"
-                    : "ENC OFF：角度模式未接入。")
-                : (encoderLoopEnabled
-                    ? "ENC ON：目标 CPS 由当前 PWM 需求和满量程 CPS 自动换算，速度 PI 只修正最终 PWM。"
-                    : "ENC OFF：命令值直接作为 PWM；目标 CPS 仅作换算参考。");
+            elements.chainExecutionValue.textContent = encoderLoopEnabled
+                ? (encoderSyncEnabled ? "速度 PI + 同步 P" : "编码器 PI 修正 PWM")
+                : "直接 PWM";
+            elements.executionDescription.textContent = encoderLoopEnabled
+                ? "ENC ON：目标 CPS 由当前 PWM 需求和满量程 CPS 自动换算，速度 PI 只修正最终 PWM。"
+                : "ENC OFF：命令值直接作为 PWM；目标 CPS 仅作换算参考。";
             elements.encoderParameterScope.textContent = encoderLoopEnabled ? "ENC ON 正在生效" : "ENC OFF 正在生效";
             elements.encoderParameterScope.classList.toggle("active", encoderLoopEnabled);
             renderEncoderSyncState();
@@ -372,67 +356,17 @@
 
         /**
          * 将固件状态帧中的模式值映射到页面按钮和控制链。
-         * 同时兼容数值 0/1/2 与调试时可能出现的模式文本。
+         * 同时兼容数值 0/1 与调试时可能出现的模式文本。
          */
         function setDriveMode(mode) {
             const isStraight = Number(mode) === 1 || String(mode).toUpperCase() === "STRAIGHT";
-            const isAngle = Number(mode) === 2 || String(mode).toUpperCase() === "ANGLE";
-            currentDriveMode = isAngle ? 2 : (isStraight ? 1 : 0);
-            elements.driveModeText.textContent = isAngle ? "角度模式" : (isStraight ? "直行模式" : "循迹模式");
-            elements.trackingModeButton.classList.toggle("active", !isStraight && !isAngle);
+            currentDriveMode = isStraight ? 1 : 0;
+            elements.driveModeText.textContent = isStraight ? "直行模式" : "直接模式";
+            elements.trackingModeButton.classList.toggle("active", !isStraight);
             elements.straightModeButton.classList.toggle("active", isStraight);
-            elements.angleModeButton.classList.toggle("active", isAngle);
-            elements.trackingModeButton.setAttribute("aria-pressed", String(!isStraight && !isAngle));
+            elements.trackingModeButton.setAttribute("aria-pressed", String(!isStraight));
             elements.straightModeButton.setAttribute("aria-pressed", String(isStraight));
-            elements.angleModeButton.setAttribute("aria-pressed", String(isAngle));
             renderControlStrategy();
-        }
-
-        /**
-         * 使用 MCU 快照刷新角度摘要、方位图、状态徽标和车端归零按钮。
-         * 此函数不从原始 Yaw 推导控制量，确保网页显示与实际电机控制完全同源。
-         */
-        function renderAngleRuntime() {
-            const stateName = ANGLE_STATE_NAMES[currentAngleState] || `未知状态 ${currentAngleState}`;
-            const connected = Boolean(serialPort && serialPort.writable && keepReading);
-            const hasHeading = Number.isFinite(currentAngleHeading);
-            const headingText = hasHeading ? currentAngleHeading.toFixed(1) : "--";
-            const targetText = Number.isFinite(currentAngleTarget) ? currentAngleTarget.toFixed(1) : "--";
-            const errorText = Number.isFinite(currentAngleError) ? currentAngleError.toFixed(1) : "--";
-
-            elements.angleRuntimeSummary.textContent = `${stateName} · 当前 ${headingText}° / 目标 ${targetText}° / 误差 ${errorText}° / 输出 ${currentAngleOutput}`;
-            elements.vehicleYawState.textContent = angleControlReady ? stateName : (currentAngleState === 5 ? "IMU 数据超时" : "等待车端零位");
-            elements.vehicleYawState.classList.toggle("ready", angleControlReady);
-            elements.vehicleYawValue.textContent = headingText;
-            elements.vehicleYawTarget.textContent = targetText === "--" ? "--" : targetText + "°";
-            elements.vehicleYawError.textContent = errorText === "--" ? "--" : (currentAngleError > 0 ? "+" : "") + errorText + "°";
-            elements.vehicleYawOutput.textContent = String(currentAngleOutput);
-            elements.vehicleYawControlState.textContent = stateName;
-            elements.vehicleYawInitial.textContent = Number.isFinite(angleZeroYaw) ? angleZeroYaw.toFixed(1) + "°" : "--";
-            /* 没有串口或 AR=0 时禁用车端归零，避免发送必然失败的命令序列。 */
-            elements.resetVehicleYawButton.disabled = !connected || !angleControlReady;
-
-            if (hasHeading) {
-                /* CSS 变量直接使用车端罗盘角：顺时针为正，与俯视图旋转方向一致。 */
-                elements.vehicleYawCar.style.setProperty("--vehicle-yaw", currentAngleHeading + "deg");
-                elements.vehicleYawStage.setAttribute("aria-label", `车端相对方位角 ${headingText} 度，目标 ${targetText} 度，${stateName}`);
-            }
-            renderControlStrategy();
-        }
-
-        /**
-         * 合并一次 S/T 帧中实际存在的角度字段。
-         * S 帧通常含目标和零位，T 帧通常含航向、误差和输出，因此采用增量更新。
-         */
-        function setAngleRuntime(values) {
-            if (values.ANGLE_HEADING !== undefined && Number.isFinite(Number(values.ANGLE_HEADING))) currentAngleHeading = Number(values.ANGLE_HEADING);
-            if (values.ANGLE_TARGET !== undefined && Number.isFinite(Number(values.ANGLE_TARGET))) currentAngleTarget = Number(values.ANGLE_TARGET);
-            if (values.ANGLE_ERROR !== undefined && Number.isFinite(Number(values.ANGLE_ERROR))) currentAngleError = Number(values.ANGLE_ERROR);
-            if (values.ANGLE_OUTPUT !== undefined && Number.isFinite(Number(values.ANGLE_OUTPUT))) currentAngleOutput = Number(values.ANGLE_OUTPUT);
-            if (values.ANGLE_STATE !== undefined && Number.isFinite(Number(values.ANGLE_STATE))) currentAngleState = Number(values.ANGLE_STATE);
-            if (values.ANGLE_READY !== undefined) angleControlReady = Number(values.ANGLE_READY) === 1 || String(values.ANGLE_READY).toUpperCase() === "ON";
-            if (values.ANGLE_ZERO_YAW !== undefined && Number.isFinite(Number(values.ANGLE_ZERO_YAW))) angleZeroYaw = Number(values.ANGLE_ZERO_YAW);
-            renderAngleRuntime();
         }
 
         function setEncoderLoopState(enabled) {

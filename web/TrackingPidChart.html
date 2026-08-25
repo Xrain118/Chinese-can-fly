@@ -480,19 +480,10 @@
             "state.ENC_SYNC_ENABLED": { label: "同步功能开关", group: "控制参数", unit: "" },
             "state.ENC_SYNC_KP": { label: "同步 Kp", group: "控制参数", unit: "" },
             "state.ENC_SYNC_TOLERANCE": { label: "同步容差", group: "控制参数", unit: "CPS" },
-            "state.ENC_SYNC_LIMIT": { label: "同步修正限幅", group: "控制参数", unit: "PWM" },
-            "imu.ROLL": { label: "横滚 Roll", group: "IMU 姿态", unit: "°" },
-            "imu.PITCH": { label: "俯仰 Pitch", group: "IMU 姿态", unit: "°" },
-            "imu.YAW": { label: "偏航 Yaw", group: "IMU 姿态", unit: "°" },
-            "imu.AX": { label: "加速度 X", group: "IMU 加速度", unit: "m/s²" },
-            "imu.AY": { label: "加速度 Y", group: "IMU 加速度", unit: "m/s²" },
-            "imu.AZ": { label: "加速度 Z", group: "IMU 加速度", unit: "m/s²" },
-            "imu.GX": { label: "角速度 X", group: "IMU 角速度", unit: "rad/s" },
-            "imu.GY": { label: "角速度 Y", group: "IMU 角速度", unit: "rad/s" },
-            "imu.GZ": { label: "角速度 Z", group: "IMU 角速度", unit: "rad/s" }
+            "state.ENC_SYNC_LIMIT": { label: "同步修正限幅", group: "控制参数", unit: "PWM" }
         };
 
-        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "四轮编码器", "同步控制", "PID 派生量", "控制参数", "八路循迹传感器", "IMU 姿态", "IMU 加速度", "IMU 角速度", "运行状态", "遥测扩展", "IMU 扩展", "状态扩展", "自定义"];
+        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "四轮编码器", "同步控制", "PID 派生量", "控制参数", "八路循迹传感器", "运行状态", "遥测扩展", "状态扩展", "自定义"];
         const PRESETS = {
             tracking: ["telemetry.ERR", "telemetry.PWM_L", "telemetry.PWM_R"],
             leftSpeed: ["telemetry.TARGET_L", "telemetry.ENC_L", "derived.ENC_ERROR_L", "telemetry.PWM_L"],
@@ -546,7 +537,9 @@
         const state = {
             values: new Map(),
             fields: new Map(Object.entries(FIELD_INFO)),
-            selected: new Set(Array.isArray(savedSettings.selected) ? savedSettings.selected : defaultSelection),
+            selected: new Set(Array.isArray(savedSettings.selected)
+                ? savedSettings.selected.filter((id) => Object.prototype.hasOwnProperty.call(FIELD_INFO, id))
+                : defaultSelection),
             colors: savedSettings.colors && typeof savedSettings.colors === "object" ? savedSettings.colors : {},
             samples: [],
             paused: false,
@@ -576,7 +569,7 @@
         function fallbackFieldInfo(id) {
             const [source, ...keyParts] = id.split(".");
             const key = keyParts.join(".");
-            const groupNames = { telemetry: "遥测扩展", imu: "IMU 扩展", state: "状态扩展", derived: "PID 派生量" };
+            const groupNames = { telemetry: "遥测扩展", state: "状态扩展", derived: "PID 派生量" };
             return { label: key.replace(/_/g, " "), group: groupNames[source] || "自定义", unit: "" };
         }
 

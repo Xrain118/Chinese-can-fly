@@ -1,7 +1,7 @@
         /*
          * STM32 上行帧解析和页面数据回填。
          *
-         * 固件输出 T/S/CFG/I/OK/ERR 文本帧：这里负责把短字段扩展为页面语义名，
+         * 固件输出 T/S/CFG/OK/ERR 文本帧：这里负责把短字段扩展为页面语义名，
          * 再分发到 UI、预设同步和 PID 图表。这里不直接发送任何控制命令。
          */
         "use strict";
@@ -33,134 +33,6 @@
         function setInputValue(id, value) {
             if (value === undefined || value === "") return;
             document.getElementById(id).value = value;
-        }
-
-        function setImuNumber(id, value) {
-            if (value === undefined) return;
-            const number = Number(value);
-            document.getElementById(id).textContent = Number.isFinite(number)
-                ? (Number.isInteger(number) ? String(number) : number.toFixed(3))
-                : "--";
-        }
-
-        function setAttitudeVisualState(state, text) {
-            elements.attitudeStage.classList.toggle("live", state === "live");
-            elements.attitudeStage.classList.toggle("stale", state === "stale");
-            elements.attitudeStatusText.textContent = text;
-            const statePill = document.getElementById("imuState");
-            statePill.classList.toggle("ready", state === "live");
-            statePill.textContent = state === "live"
-                ? "原始数据"
-                : (state === "stale" ? "数据超时" : "等待遥测");
-        }
-
-        function angleDelta(next, previous) {
-            return ((next - previous + 540) % 360) - 180;
-        }
-
-        function trackAttitudeAngle(name, nextValue) {
-            const tracker = attitudeAngles[name];
-            if (tracker.raw === null) {
-                tracker.raw = nextValue;
-                tracker.continuous = nextValue;
-                return;
-            }
-
-            /* Yaw/Roll/Pitch 可能跨 0/360，continuous 用最短角差展开成连续曲线。 */
-            tracker.continuous += angleDelta(nextValue, tracker.raw);
-            tracker.raw = nextValue;
-        }
-
-        function renderAttitudeModel() {
-            const roll = attitudeAngles.roll.continuous - attitudeZero.roll;
-            const pitch = attitudeAngles.pitch.continuous - attitudeZero.pitch;
-            const yaw = attitudeAngles.yaw.continuous - attitudeZero.yaw;
-            const displayRoll = attitudeView.lockedTop ? 0 : roll;
-            const displayPitch = attitudeView.lockedTop ? 0 : pitch;
-            const displayYaw = yaw;
-
-            /* 实物坐标：+X 沿模组板面向下，+Y 沿板面向左，+Z 垂直板面向上；Pitch 符号按实测方向校正。 */
-            elements.attitudeModel.style.transform =
-                `rotateZ(${-displayYaw}deg) rotateX(${displayPitch}deg) rotateY(${displayRoll}deg)`;
-            elements.attitudeAxisLabels.forEach(label => {
-                label.style.transform =
-                    `rotateY(${-displayRoll}deg) rotateX(${-displayPitch}deg) rotateZ(${displayYaw}deg) ` +
-                    `rotateZ(${-attitudeView.yaw}deg) rotateX(${-attitudeView.pitch}deg)`;
-            });
-            elements.attitudeStage.setAttribute(
-                "aria-label",
-                (attitudeHasData
-                    ? `IMU 模组实时姿态：横滚 ${roll.toFixed(1)} 度，俯仰 ${pitch.toFixed(1)} 度，偏航 ${yaw.toFixed(1)} 度`
-                    : "等待姿态传感器数据") +
-                    (attitudeView.lockedTop ? "；当前为固定俯视" : "；可用鼠标或触摸拖动改变观察视角")
-            );
-        }
-
-        function renderAttitudeView() {
-            elements.attitudeCamera.style.setProperty("--view-pitch", attitudeView.pitch + "deg");
-            elements.attitudeCamera.style.setProperty("--view-yaw", attitudeView.yaw + "deg");
-            renderAttitudeModel();
-        }
-
-        function wrapDegrees360(value) {
-            return ((value % 360) + 360) % 360;
-        }
-
-        function wrapDegreesSigned(value) {
-            return ((value + 540) % 360) - 180;
-        }
-
-        /**
-         * 清除浏览器保存的 MCU 角度快照。
-         * 这里只复位显示，不会发送 ANGLE ZERO，也不会改变三维模型的姿态显示零位。
-         */
-        function resetVehicleYawReference() {
-            currentAngleHeading = null;
-            currentAngleError = 0;
-            currentAngleOutput = 0;
-            currentAngleState = 0;
-            angleControlReady = false;
-            angleZeroYaw = null;
-            elements.vehicleYawCar.style.setProperty("--vehicle-yaw", "0deg");
-            elements.vehicleYawValue.textContent = "--";
-            elements.vehicleYawInitial.textContent = "--";
-            elements.vehicleYawCurrent.textContent = "--";
-            elements.vehicleYawTarget.textContent = "--";
-            elements.vehicleYawError.textContent = "--";
-            elements.vehicleYawOutput.textContent = "--";
-            elements.vehicleYawControlState.textContent = "--";
-            elements.vehicleYawState.textContent = "等待车端零位";
-            elements.vehicleYawState.classList.remove("ready");
-            elements.vehicleYawStage.setAttribute("aria-label", "等待车端角度状态和零位");
-            elements.resetVehicleYawButton.disabled = true;
-            renderAngleRuntime();
-        }
-
-        function updateAttitudeVisualization(values) {
-            const roll = Number(values.ROLL);
-            const pitch = Number(values.PITCH);
-            const yaw = Number(values.YAW);
-            if (![roll, pitch, yaw].every(Number.isFinite)) return;
-
-            trackAttitudeAngle("roll", roll);
-            trackAttitudeAngle("pitch", pitch);
-            trackAttitudeAngle("yaw", yaw);
-            /* I 帧原始 Yaw 只用于诊断；控制方位 AH 由独立的 S/T 帧更新。 */
-            elements.vehicleYawCurrent.textContent = yaw.toFixed(1) + "°";
-
-            const now = Date.now();
-            if (lastAttitudeAt) {
-                const instantRate = 1000 / Math.max(1, now - lastAttitudeAt);
-                attitudeRateHz = attitudeRateHz
-                    ? attitudeRateHz * 0.7 + instantRate * 0.3
-                    : instantRate;
-                elements.attitudeRate.textContent = attitudeRateHz.toFixed(1) + " Hz";
-            }
-            lastAttitudeAt = now;
-            attitudeHasData = true;
-            elements.zeroAttitudeButton.disabled = false;
-            setAttitudeVisualState("live", "实时姿态");
-            renderAttitudeModel();
         }
 
         function applyWheelAndSyncTelemetry(values) {
@@ -201,8 +73,6 @@
             /* T 帧是周期运行遥测：更新实时值，但不认为配置已同步。 */
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
-            /* 旧页面仍能接收 AH/AE/AO/AS/AR；当前 F407 固件通常不发送这些角度字段。 */
-            setAngleRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
             if (values.SENS !== undefined) setSensorBits(values.SENS);
             setTrackingRuntime(values);
@@ -214,37 +84,10 @@
             document.getElementById("telemetryAge").textContent = "刚刚";
         }
 
-        function applyImu(values) {
-            /* 当前 F407 只发原始六轴计数，页面显示为原始 IMU 数据，不推导姿态角。 */
-            const accel = [values.ACCEL_X, values.ACCEL_Y, values.ACCEL_Z].map(Number);
-            const gyro = [values.GYRO_X, values.GYRO_Y, values.GYRO_Z].map(Number);
-            if (!accel.every(Number.isFinite) || !gyro.every(Number.isFinite)) return;
-
-            setImuNumber("imuRoll", values.ACCEL_X);
-            setImuNumber("imuPitch", values.ACCEL_Y);
-            setImuNumber("imuYaw", values.ACCEL_Z);
-            setImuNumber("imuGyroX", values.GYRO_X);
-            setImuNumber("imuGyroY", values.GYRO_Y);
-            setImuNumber("imuGyroZ", values.GYRO_Z);
-            setImuNumber("imuTemperature", values.TEMPERATURE);
-            const now = Date.now();
-            if (lastAttitudeAt) {
-                const instantRate = 1000 / Math.max(1, now - lastAttitudeAt);
-                attitudeRateHz = attitudeRateHz
-                    ? attitudeRateHz * 0.7 + instantRate * 0.3
-                    : instantRate;
-                elements.attitudeRate.textContent = attitudeRateHz.toFixed(1) + " Hz";
-            }
-            lastAttitudeAt = now;
-            attitudeHasData = true;
-            setAttitudeVisualState("live", "原始 IMU 数据");
-        }
-
         function applyState(values) {
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
             /* S 帧只同步运行快照；配置同步以独立 CFG 帧为准。 */
-            setAngleRuntime(values);
             setTrackingRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
             if (values.ENC_SYNC_ENABLED !== undefined) {
@@ -253,14 +96,6 @@
             setInputValue("kpInput", values.KP);
             setInputValue("kiInput", values.KI);
             setInputValue("kdInput", values.KD);
-            setInputValue("angleKpInput", values.ANGLE_KP);
-            setInputValue("angleKiInput", values.ANGLE_KI);
-            setInputValue("angleKdInput", values.ANGLE_KD);
-            setInputValue("angleTargetInput", values.ANGLE_TARGET);
-            setInputValue("angleMinimumPwmInput", values.ANGLE_MINIMUM_PWM);
-            setInputValue("angleMaximumPwmInput", values.ANGLE_MAXIMUM_PWM);
-            setInputValue("angleToleranceInput", values.ANGLE_TOLERANCE);
-            setInputValue("angleSettleTimeInput", values.ANGLE_SETTLE_TIME);
             setInputValue("speedInput", values.SPEED);
             if (values.SPEED !== undefined) setBaseSpeed(values.SPEED, true);
             setInputValue("limitInput", values.LIMIT);
@@ -302,28 +137,18 @@
             if (!silentHeartbeatResponse) appendLog("RX", line, "rx");
 
             if (prefix === "T" || prefix === "TEL") {
-                /* 兼容旧角度短字段：AH 航向、AE 误差、AO 输出、AS 状态、AR 就绪。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
+                    R: "RUN", M: "DRIVE_MODE", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
                     EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
                 });
                 applyTelemetry(values);
                 publishPidChartValues("telemetry", values);
                 return;
             }
-            if (prefix === "I" || prefix === "IMU") {
-                const values = expandKeyAliases(parseKeyValues(payload), {
-                    AX: "ACCEL_X", AY: "ACCEL_Y", AZ: "ACCEL_Z", GX: "GYRO_X", GY: "GYRO_Y", GZ: "GYRO_Z", TEMP: "TEMPERATURE"
-                });
-                applyImu(values);
-                publishPidChartValues("imu", values);
-                return;
-            }
             if (prefix === "S" || prefix === "STATE") {
                 /* 状态帧更新运行快照；配置字段由 CFG 处理。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", EC: "ENCODER_CLOSED",
-                    AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE",
                     PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE",
                     EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
                 });

@@ -6,7 +6,7 @@
          */
         "use strict";
 
-        const savedBaudRate = readStoredSetting(BAUD_RATE_STORAGE_KEY, "115200");
+        const savedBaudRate = readStoredSetting(BAUD_RATE_STORAGE_KEY, "9600");
         if (elements.baudRate.querySelector(`option[value="${savedBaudRate}"]`)) {
             elements.baudRate.value = savedBaudRate;
         }
@@ -57,7 +57,7 @@
             if (pidChartChannel) pidChartChannel.close();
         });
 
-        /* 周期刷新“最后遥测”和 IMU 超时视觉状态，不依赖车端每秒都发特殊帧。 */
+        /* 周期刷新“最后遥测”时间。 */
         window.setInterval(() => {
             const now = Date.now();
             const age = document.getElementById("telemetryAge");
@@ -67,15 +67,9 @@
                 const seconds = Math.floor((now - lastTelemetryAt) / 1000);
                 age.textContent = seconds < 2 ? "刚刚" : seconds + "s 前";
             }
-
-            if (attitudeHasData && now - lastAttitudeAt > 1800 &&
-                !elements.attitudeStage.classList.contains("stale")) {
-                setAttitudeVisualState("stale", "姿态数据超时");
-            }
         }, 1000);
 
         /* 首屏默认值全部从同一套渲染函数走，避免 HTML 初始文案和 JS 状态分叉。 */
-        resetVehicleYawReference();
         setSensorBits("00000000");
         setDriveMode(0);
         setEncoderLoopState(0);

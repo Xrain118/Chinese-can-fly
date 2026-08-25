@@ -9,7 +9,6 @@
 #include "DebugProtocol.h"
 #include "DriveControl.h"
 #include "FreeRTOS.h"
-#include "ICM42688.h"
 #include "ProtocolTx.h"
 #include "Safety.h"
 #include "SystemTick.h"
@@ -17,7 +16,7 @@
 #include "task.h"
 
 #define UGV_CONTROL_PERIOD_MS   (10U)
-#define UGV_TELEMETRY_PERIOD_MS (50U)
+#define UGV_TELEMETRY_PERIOD_MS (400U)
 #define UGV_PROTOCOL_PERIOD_MS  (1U)
 
 #define UGV_CONTROL_STACK_WORDS   (512U)
@@ -40,10 +39,6 @@ static StackType_t g_controlTaskStack[UGV_CONTROL_STACK_WORDS];
 static StackType_t g_protocolTaskStack[UGV_PROTOCOL_STACK_WORDS];
 static StackType_t g_telemetryTaskStack[UGV_TELEMETRY_STACK_WORDS];
 static StackType_t g_serialTaskStack[UGV_SERIAL_STACK_WORDS];
-
-static uint8_t g_imuReady;
-static uint8_t g_imuSampleValid;
-static ICM42688_RawSample g_latestImuSample;
 
 /* ControlTask 是 DriveControl/Safety 的唯一写入者，避免多任务并发改车状态。 */
 static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
@@ -201,30 +196,6 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 	}
 }
 
-static void UgvTasks_SaveImuSample(const ICM42688_RawSample *sample)
-{
-	/* TelemetryTask 会异步读取最新样本，复制结构体时用临界区保证一致性。 */
-	taskENTER_CRITICAL();
-	g_latestImuSample = *sample;
-	g_imuSampleValid = 1U;
-	taskEXIT_CRITICAL();
-}
-
-static uint8_t UgvTasks_LoadImuSample(ICM42688_RawSample *sample)
-{
-	uint8_t valid;
-
-	/* 只共享最近一帧原始 IMU，不排队历史帧，避免遥测阻塞控制任务。 */
-	taskENTER_CRITICAL();
-	valid = g_imuSampleValid;
-	if ((valid != 0U) && (sample != 0))
-	{
-		*sample = g_latestImuSample;
-	}
-	taskEXIT_CRITICAL();
-	return valid;
-}
-
 static void UgvTasks_ControlTask(void *argument)
 {
 	TickType_t wakeTick;
@@ -237,14 +208,6 @@ static void UgvTasks_ControlTask(void *argument)
 
 	/* 启动诊断也走 TX 队列，保证调度后所有串口输出都由 SerialTxTask 串行化。 */
 	DebugProtocol_SendState();
-	if (g_imuReady != 0U)
-	{
-		(void)ProtocolTx_Printf("OK C=IMU,WHO=%u\r\n", ICM42688_ReadWhoAmI());
-	}
-	else
-	{
-		(void)ProtocolTx_SendString("ERR C=IMU,M=WHO_AM_I\r\n");
-	}
 
 	for (;;)
 	{
@@ -256,16 +219,6 @@ static void UgvTasks_ControlTask(void *argument)
 		{
 			UgvTasks_HandleCommand(&command, nowMs);
 			nowMs = SystemTick_Millis();
-		}
-
-		if ((g_imuReady != 0U) && (ICM42688_DataReady() != 0U))
-		{
-			ICM42688_RawSample sample;
-			if (ICM42688_ReadSample(&sample) != 0U)
-			{
-				UgvTasks_SaveImuSample(&sample);
-				Safety_NotifyImuSample(nowMs);
-			}
 		}
 
 		Safety_Update(nowMs);
@@ -298,7 +251,6 @@ static void UgvTasks_ProtocolTask(void *argument)
 static void UgvTasks_TelemetryTask(void *argument)
 {
 	TickType_t wakeTick;
-	ICM42688_RawSample sample;
 
 	(void)argument;
 	wakeTick = xTaskGetTickCount();
@@ -307,10 +259,6 @@ static void UgvTasks_TelemetryTask(void *argument)
 		vTaskDelayUntil(&wakeTick, pdMS_TO_TICKS(UGV_TELEMETRY_PERIOD_MS));
 		/* 遥测只读快照并排队发送，不直接触碰串口寄存器。 */
 		DebugProtocol_SendTelemetry();
-		if (UgvTasks_LoadImuSample(&sample) != 0U)
-		{
-			DebugProtocol_SendImuRaw(&sample);
-		}
 	}
 }
 
@@ -320,10 +268,8 @@ static void UgvTasks_SerialTask(void *argument)
 	ProtocolTx_RunSerialTask();
 }
 
-void UgvTasks_Init(uint8_t imuReady)
+void UgvTasks_Init(void)
 {
-	g_imuReady = (imuReady != 0U) ? 1U : 0U;
-	g_imuSampleValid = 0U;
 	ProtocolTx_Init();
 	UgvCommandQueue_Init();
 }

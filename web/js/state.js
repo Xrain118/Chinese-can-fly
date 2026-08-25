@@ -23,21 +23,6 @@
         let logLineCount = 0;
         let nextCommandId = 1;
         let lastTelemetryAt = 0;
-        let lastAttitudeAt = 0;
-        let attitudeRateHz = 0;
-        let attitudeHasData = false;
-        let attitudeZeroed = false;
-        /*
-         * 角度控制运行状态严格以 MCU 的 S/T 帧为准。null 表示尚未收到对应字段，
-         * 不能用浏览器接收的第一帧原始 Yaw 擅自建立另一个控制零位。
-         */
-        let currentAngleHeading = null;
-        let currentAngleTarget = 0;
-        let currentAngleError = 0;
-        let currentAngleOutput = 0;
-        let currentAngleState = 0;
-        let angleControlReady = false;
-        let angleZeroYaw = null;
         let currentDriveMode = 0;
         let encoderLoopEnabled = false;
         let encoderSyncEnabled = false;
@@ -53,23 +38,6 @@
         const pidTelemetryState = {};
         let pidChartConnectionState = { connected: false, message: "未连接", reconnecting: false };
 
-        const attitudeAngles = {
-            roll: { raw: null, continuous: 0 },
-            pitch: { raw: null, continuous: 0 },
-            yaw: { raw: null, continuous: 0 }
-        };
-        const attitudeZero = { roll: 0, pitch: 0, yaw: 0 };
-        const attitudeView = {
-            pitch: 57,
-            yaw: -42,
-            lockedTop: false,
-            pointerId: null,
-            startX: 0,
-            startY: 0,
-            startPitch: 57,
-            startYaw: -42
-        };
-
         const MAX_LOG_LINES = 300;
         const MAX_RECEIVE_BUFFER = 8192;
         const MAX_COMMAND_TOASTS = 4;
@@ -82,18 +50,15 @@
         /* 全新 STM32 版本地存储 key，避免读到旧 MSPM0 页面保存的预设。 */
         const CONFIG_STORAGE_KEY = "stm32TrackingDebugger.configuration.v1";
         const CONFIG_FORMAT = "stm32-tracking-debugger-config";
-        const CONFIG_VERSION = 2;
+        const CONFIG_VERSION = 3;
         const PID_CHART_CHANNEL_NAME = "tracking-debugger-pid-chart-v1";
         /* 短字段与页面/图表使用的语义名称在此保持唯一映射，模式值 M 不再压缩为布尔量。 */
         const PID_CHART_ALIAS_KEYS = {
-            telemetry: { R: "RUN", M: "DRIVE_MODE", AH: "ANGLE_HEADING", AE: "ANGLE_ERROR", AO: "ANGLE_OUTPUT", AS: "ANGLE_STATE", AR: "ANGLE_READY", S: "SENS", E: "ERR", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
-            imu: { AX: "ACCEL_X", AY: "ACCEL_Y", AZ: "ACCEL_Z", GX: "GYRO_X", GY: "GYRO_Y", GZ: "GYRO_Z", TEMP: "TEMPERATURE" },
-            state: { R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", AKP: "ANGLE_KP", AKI: "ANGLE_KI", AKD: "ANGLE_KD", AT: "ANGLE_TARGET", AMIN: "ANGLE_MINIMUM_PWM", AMAX: "ANGLE_MAXIMUM_PWM", ATOL: "ANGLE_TOLERANCE", ASET: "ANGLE_SETTLE_TIME", AR: "ANGLE_READY", AZ: "ANGLE_ZERO_YAW", AS: "ANGLE_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE", EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT" }
+            telemetry: { R: "RUN", M: "DRIVE_MODE", S: "SENS", E: "ERR", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
+            state: { R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE", EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT" }
         };
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder("utf-8");
-        /* 数组下标必须与固件 AnglePID_State 的 0～5 数值完全一致。 */
-        const ANGLE_STATE_NAMES = ["等待 IMU", "角度空闲", "正在转向", "到位确认", "制动保持", "IMU 故障"];
         /* 等待 OK/ERR 的命令事务；PING/HEARTBEAT 走静默路径，不进入这里刷屏。 */
         const pendingCommands = [];
 
@@ -138,8 +103,6 @@
             modeDescription: document.getElementById("modeDescription"),
             trackingModeButton: document.getElementById("trackingModeButton"),
             straightModeButton: document.getElementById("straightModeButton"),
-            /* 模式 2 和角度控制卡片的固定 DOM 引用。 */
-            angleModeButton: document.getElementById("angleModeButton"),
             encoderLoopState: document.getElementById("encoderLoopState"),
             encoderOnButton: document.getElementById("encoderOnButton"),
             encoderOffButton: document.getElementById("encoderOffButton"),
@@ -152,8 +115,6 @@
             chainActualValue: document.getElementById("chainActualValue"),
             chainPwmValue: document.getElementById("chainPwmValue"),
             trackingPidScope: document.getElementById("trackingPidScope"),
-            anglePidScope: document.getElementById("anglePidScope"),
-            angleRuntimeSummary: document.getElementById("angleRuntimeSummary"),
             trackingWeightsScope: document.getElementById("trackingWeightsScope"),
             trackingRuntimeState: document.getElementById("trackingRuntimeState"),
             encoderParameterScope: document.getElementById("encoderParameterScope"),
@@ -164,26 +125,6 @@
             response: document.getElementById("lastResponse"),
             commandToastStack: document.getElementById("commandToastStack"),
             consoleTabs: document.querySelectorAll(".console-tab"),
-            consolePages: document.querySelectorAll(".console-page"),
-            attitudeStage: document.getElementById("attitudeStage"),
-            attitudeCamera: document.getElementById("attitudeCamera"),
-            attitudeModel: document.getElementById("attitudeModel"),
-            attitudeStatusText: document.getElementById("attitudeStatusText"),
-            attitudeReference: document.getElementById("attitudeReference"),
-            attitudeRate: document.getElementById("attitudeRate"),
-            topViewButton: document.getElementById("topViewButton"),
-            zeroAttitudeButton: document.getElementById("zeroAttitudeButton"),
-            attitudeAxisLabels: document.querySelectorAll(".model-axis-label"),
-            vehicleYawStage: document.getElementById("vehicleYawStage"),
-            vehicleYawState: document.getElementById("vehicleYawState"),
-            vehicleYawCar: document.getElementById("vehicleYawCar"),
-            vehicleYawValue: document.getElementById("vehicleYawValue"),
-            vehicleYawInitial: document.getElementById("vehicleYawInitial"),
-            vehicleYawCurrent: document.getElementById("vehicleYawCurrent"),
-            vehicleYawTarget: document.getElementById("vehicleYawTarget"),
-            vehicleYawError: document.getElementById("vehicleYawError"),
-            vehicleYawOutput: document.getElementById("vehicleYawOutput"),
-            vehicleYawControlState: document.getElementById("vehicleYawControlState"),
-            resetVehicleYawButton: document.getElementById("resetVehicleYawButton")
+            consolePages: document.querySelectorAll(".console-page")
         };
 

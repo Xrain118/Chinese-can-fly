@@ -6,12 +6,10 @@
          */
         "use strict";
 
-        const CONFIG_BAUD_RATES = [9600, 19200, 38400, 57600, 115200];
+        const CONFIG_BAUD_RATES = [9600];
         const PRESET_FIELD_IDS = [
             "presetNameInput", "presetBaudRateSelect", "presetAutoReconnectSelect",
             "presetDriveModeSelect", "presetSpeedInput",
-            "presetAngleTargetInput", "presetAngleKpInput", "presetAngleKiInput", "presetAngleKdInput",
-            "presetAngleMinimumPwmInput", "presetAngleMaximumPwmInput", "presetAngleToleranceInput", "presetAngleSettleTimeInput",
             "presetKpInput", "presetKiInput", "presetKdInput", "presetLimitInput",
             "presetEncoderEnabledSelect", "presetEncoderKpInput", "presetEncoderKiInput",
             "presetEncoderFullScaleInput", "presetEncoderLimitInput",
@@ -66,20 +64,20 @@
         /**
          * 校验并规范化导入、本地存储或页面收集到的整套配置。
          * 返回对象始终是当前版本；校验失败会抛错，调用方不会部分覆盖当前预设。
-         * v1 预设没有同步环字段，读取时补入关闭状态和保守默认参数。
+         * v1 预设没有同步环字段，读取时补入关闭状态和保守默认参数；
+         * v1/v2 中已经停用的旧字段会被忽略。
          */
         function validateConfiguration(rawConfiguration) {
             const raw = configObject(rawConfiguration, "配置文件");
             if (raw.format !== CONFIG_FORMAT) throw new Error("不是本调试台支持的配置文件");
             const sourceVersion = Number(raw.version);
-            if (sourceVersion !== 1 && sourceVersion !== CONFIG_VERSION) {
-                throw new Error(`不支持配置版本 ${raw.version ?? "未知"}，当前支持 v1 / v${CONFIG_VERSION}`);
+            if (![1, 2, CONFIG_VERSION].includes(sourceVersion)) {
+                throw new Error(`不支持配置版本 ${raw.version ?? "未知"}，当前支持 v1 / v2 / v${CONFIG_VERSION}`);
             }
 
             const interfaceConfig = configObject(raw.interface, "interface");
             const drive = configObject(raw.drive, "drive");
             const tracking = configObject(raw.tracking, "tracking");
-            const angle = configObject(raw.angle, "angle");
             const encoder = configObject(raw.encoder, "encoder");
             const encoderSync = sourceVersion === 1 && encoder.sync === undefined
                 ? { enabled: false, kp: 0.01, toleranceCps: 50, correctionLimit: 50 }
@@ -99,14 +97,14 @@
                 }
             }
 
-            const baudRate = configNumber(interfaceConfig.baudRate, "interface.baudRate", 9600, 115200, true);
+            const baudRate = configNumber(interfaceConfig.baudRate, "interface.baudRate", 9600, 9600, true);
             if (!CONFIG_BAUD_RATES.includes(baudRate)) {
                 throw new Error("interface.baudRate 不是页面支持的波特率");
             }
-            /* 先分别校验数值范围，再检查最小/最大 PWM 的交叉约束。 */
-            const angleMinimumPwm = configNumber(angle.minimumPwm, "angle.minimumPwm", 0, 1000, true);
-            const angleMaximumPwm = configNumber(angle.maximumPwm, "angle.maximumPwm", 0, 1000, true);
-            if (angleMinimumPwm > angleMaximumPwm) throw new Error("angle.minimumPwm 不能大于 angle.maximumPwm");
+            const rawDriveMode = String(drive.mode ?? "").toLowerCase();
+            const driveMode = rawDriveMode === "angle" && sourceVersion < CONFIG_VERSION
+                ? "track"
+                : configEnum(rawDriveMode, "drive.mode", ["track", "straight"]);
 
             return {
                 format: CONFIG_FORMAT,
@@ -118,7 +116,7 @@
                     autoReconnect: configBoolean(interfaceConfig.autoReconnect, "interface.autoReconnect")
                 },
                 drive: {
-                    mode: configEnum(drive.mode, "drive.mode", ["track", "straight", "angle"]),
+                    mode: driveMode,
                     speed: configNumber(drive.speed, "drive.speed", 0, 1000, true)
                 },
                 tracking: {
@@ -127,16 +125,6 @@
                     kd: configNumber(tracking.kd, "tracking.kd", 0, 1),
                     correctionLimit: configNumber(tracking.correctionLimit, "tracking.correctionLimit", 0, 500, true),
                     weights
-                },
-                angle: {
-                    target: configNumber(angle.target, "angle.target", 0, 360),
-                    kp: configNumber(angle.kp, "angle.kp", 0, 20),
-                    ki: configNumber(angle.ki, "angle.ki", 0, 10),
-                    kd: configNumber(angle.kd, "angle.kd", 0, 10),
-                    minimumPwm: angleMinimumPwm,
-                    maximumPwm: angleMaximumPwm,
-                    toleranceDegrees: configNumber(angle.toleranceDegrees, "angle.toleranceDegrees", 0.5, 20),
-                    settleTimeMs: configNumber(angle.settleTimeMs, "angle.settleTimeMs", 50, 2000, true)
                 },
                 encoder: {
                     enabled: configBoolean(encoder.enabled, "encoder.enabled"),
@@ -170,19 +158,8 @@
                 },
                 drive: {
                     /* 模式以最近一次 S/T 帧回读为准，未连接时取当前界面选择。 */
-                    mode: currentDriveMode === 2 ? "angle" : (currentDriveMode === 1 ? "straight" : "track"),
+                    mode: currentDriveMode === 1 ? "straight" : "track",
                     speed: controlValue("speedInput")
-                },
-                /* 从主界面读取车端最近一次 S 帧回填的角度配置，不采集运行时 AZ 零位。 */
-                angle: {
-                    target: controlValue("angleTargetInput"),
-                    kp: controlValue("angleKpInput"),
-                    ki: controlValue("angleKiInput"),
-                    kd: controlValue("angleKdInput"),
-                    minimumPwm: controlValue("angleMinimumPwmInput"),
-                    maximumPwm: controlValue("angleMaximumPwmInput"),
-                    toleranceDegrees: controlValue("angleToleranceInput"),
-                    settleTimeMs: controlValue("angleSettleTimeInput")
                 },
                 tracking: {
                     kp: controlValue("kpInput"),
@@ -221,17 +198,6 @@
                     mode: controlValue("presetDriveModeSelect"),
                     speed: controlValue("presetSpeedInput")
                 },
-                /* 预设对话框保存目标和调参值；本次上电零位不属于可移植配置。 */
-                angle: {
-                    target: controlValue("presetAngleTargetInput"),
-                    kp: controlValue("presetAngleKpInput"),
-                    ki: controlValue("presetAngleKiInput"),
-                    kd: controlValue("presetAngleKdInput"),
-                    minimumPwm: controlValue("presetAngleMinimumPwmInput"),
-                    maximumPwm: controlValue("presetAngleMaximumPwmInput"),
-                    toleranceDegrees: controlValue("presetAngleToleranceInput"),
-                    settleTimeMs: controlValue("presetAngleSettleTimeInput")
-                },
                 tracking: {
                     kp: controlValue("presetKpInput"),
                     ki: controlValue("presetKiInput"),
@@ -268,14 +234,6 @@
                 setControlValue("presetAutoReconnectSelect", config.interface.autoReconnect ? "on" : "off");
                 setControlValue("presetDriveModeSelect", config.drive.mode);
                 setControlValue("presetSpeedInput", config.drive.speed);
-                setControlValue("presetAngleTargetInput", config.angle.target);
-                setControlValue("presetAngleKpInput", config.angle.kp);
-                setControlValue("presetAngleKiInput", config.angle.ki);
-                setControlValue("presetAngleKdInput", config.angle.kd);
-                setControlValue("presetAngleMinimumPwmInput", config.angle.minimumPwm);
-                setControlValue("presetAngleMaximumPwmInput", config.angle.maximumPwm);
-                setControlValue("presetAngleToleranceInput", config.angle.toleranceDegrees);
-                setControlValue("presetAngleSettleTimeInput", config.angle.settleTimeMs);
                 setControlValue("presetKpInput", config.tracking.kp);
                 setControlValue("presetKiInput", config.tracking.ki);
                 setControlValue("presetKdInput", config.tracking.kd);
@@ -495,7 +453,7 @@
         }
 
         /**
-         * 将一份已验证的 v2 预设转换为安全串口命令序列。
+         * 将一份已验证的当前版本预设转换为安全串口命令序列。
          * 先停止整车；只下发可保存配置，绝不自动恢复运行状态。
          */
         function buildConfigurationCommands(configuration) {

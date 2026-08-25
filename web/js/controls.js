@@ -91,119 +91,12 @@
         /* 当前 F407 固件只保留 DIRECT/STRAIGHT；旧循迹按钮映射为直接 PWM 模式。 */
         elements.trackingModeButton.addEventListener("click", () => sendConfigurationCommand("MODE DIRECT"));
         elements.straightModeButton.addEventListener("click", () => sendConfigurationCommand("MODE STRAIGHT"));
-        elements.angleModeButton.addEventListener("click", () => reportUnsupportedCommand("角度模式"));
-
-        elements.attitudeStage.addEventListener("pointerdown", event => {
-            if (attitudeView.pointerId !== null || (event.pointerType === "mouse" && event.button !== 0)) return;
-            attitudeView.lockedTop = false;
-            elements.topViewButton.setAttribute("aria-pressed", "false");
-            attitudeView.pointerId = event.pointerId;
-            attitudeView.startX = event.clientX;
-            attitudeView.startY = event.clientY;
-            attitudeView.startPitch = attitudeView.pitch;
-            attitudeView.startYaw = attitudeView.yaw;
-            elements.attitudeStage.classList.add("dragging");
-            elements.attitudeStage.setPointerCapture(event.pointerId);
-            event.preventDefault();
-        });
-
-        elements.attitudeStage.addEventListener("pointermove", event => {
-            if (event.pointerId !== attitudeView.pointerId) return;
-            const deltaX = event.clientX - attitudeView.startX;
-            const deltaY = event.clientY - attitudeView.startY;
-            attitudeView.yaw = attitudeView.startYaw - deltaX * 0.42;
-            attitudeView.pitch = attitudeView.startPitch - deltaY * 0.42;
-            renderAttitudeView();
-            event.preventDefault();
-        });
-
-        function finishAttitudeViewDrag(event) {
-            if (event.pointerId !== attitudeView.pointerId) return;
-            const pointerId = attitudeView.pointerId;
-            attitudeView.pointerId = null;
-            elements.attitudeStage.classList.remove("dragging");
-            if (elements.attitudeStage.hasPointerCapture(pointerId)) {
-                elements.attitudeStage.releasePointerCapture(pointerId);
-            }
-        }
-
-        elements.attitudeStage.addEventListener("pointerup", finishAttitudeViewDrag);
-        elements.attitudeStage.addEventListener("pointercancel", finishAttitudeViewDrag);
-        elements.attitudeStage.addEventListener("lostpointercapture", finishAttitudeViewDrag);
-
-        elements.topViewButton.addEventListener("click", () => {
-            attitudeView.pitch = 0;
-            attitudeView.yaw = 0;
-            attitudeView.lockedTop = true;
-            elements.topViewButton.setAttribute("aria-pressed", "true");
-            renderAttitudeView();
-        });
-
-        /* 当前固件不提供 ANGLE ZERO，按钮保留为旧页面占位。 */
-        elements.resetVehicleYawButton.addEventListener("click", () => {
-            reportUnsupportedCommand("ANGLE ZERO");
-        });
-
-        /* 三维模型姿态归零是纯显示功能，不发送任何车端命令，故与上方按钮分开。 */
-        elements.zeroAttitudeButton.addEventListener("click", () => {
-            if (!attitudeHasData) return;
-
-            attitudeZeroed = !attitudeZeroed;
-            if (attitudeZeroed) {
-                attitudeZero.roll = attitudeAngles.roll.continuous;
-                attitudeZero.pitch = attitudeAngles.pitch.continuous;
-                attitudeZero.yaw = attitudeAngles.yaw.continuous;
-            } else {
-                attitudeZero.roll = 0;
-                attitudeZero.pitch = 0;
-                attitudeZero.yaw = 0;
-            }
-
-            elements.zeroAttitudeButton.setAttribute("aria-pressed", String(attitudeZeroed));
-            elements.zeroAttitudeButton.textContent = attitudeZeroed ? "恢复绝对姿态" : "以当前姿态归零";
-            if (elements.attitudeReference) {
-                elements.attitudeReference.textContent = attitudeZeroed ? "相对零位" : "绝对姿态";
-            }
-            renderAttitudeModel();
-        });
 
         document.getElementById("sendPidButton").addEventListener("click", () => {
             const kp = rangedInput("kpInput", 0, 2);
             const ki = rangedInput("kiInput", 0, 2);
             const kd = rangedInput("kdInput", 0, 1);
             if (kp !== null && ki !== null && kd !== null) reportUnsupportedCommand("循迹 PID");
-        });
-
-        /* 以下四组输入边界与固件 AnglePID.h 完全一致，错误值在浏览器端先行拦截。 */
-        document.getElementById("sendAngleTargetButton").addEventListener("click", () => {
-            const target = rangedInput("angleTargetInput", 0, 360);
-            if (target !== null) reportUnsupportedCommand("ANGLE TARGET");
-        });
-
-        document.getElementById("sendAnglePidButton").addEventListener("click", () => {
-            const kp = rangedInput("angleKpInput", 0, 20);
-            const ki = rangedInput("angleKiInput", 0, 10);
-            const kd = rangedInput("angleKdInput", 0, 10);
-            if (kp !== null && ki !== null && kd !== null) reportUnsupportedCommand("ANGLE PID");
-        });
-
-        document.getElementById("sendAnglePwmButton").addEventListener("click", () => {
-            const minimum = rangedInput("angleMinimumPwmInput", 0, 1000, true);
-            const maximum = rangedInput("angleMaximumPwmInput", 0, 1000, true);
-            if (minimum === null || maximum === null) return;
-            /* 单项范围都合法后仍需检查 min<=max 这一组间约束。 */
-            if (minimum > maximum) {
-                appendLog("ERR", "角度最小转向 PWM 不能大于最大转向 PWM", "err");
-                document.getElementById("angleMinimumPwmInput").focus();
-                return;
-            }
-            reportUnsupportedCommand("ANGLE PWM");
-        });
-
-        document.getElementById("sendAngleSettlingButton").addEventListener("click", () => {
-            const tolerance = rangedInput("angleToleranceInput", 0.5, 20);
-            const settleTime = rangedInput("angleSettleTimeInput", 50, 2000, true);
-            if (tolerance !== null && settleTime !== null) reportUnsupportedCommand("ANGLE SETTLE");
         });
 
         document.getElementById("sendSpeedButton").addEventListener("click", () => {

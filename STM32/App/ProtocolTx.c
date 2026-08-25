@@ -1,7 +1,7 @@
 /*
  * 串口下行发送队列。
  *
- * 多个任务都可能需要输出 OK/ERR/遥测/IMU 帧，但 USART 只能按字节顺序发送。
+ * 多个任务都可能需要输出 OK/ERR/遥测帧，但 USART 只能按字节顺序发送。
  * 本文件把完整协议行先排队，再由 SerialTxTask 独占串口 TX，防止半行交错。
  */
 #include "ProtocolTx.h"

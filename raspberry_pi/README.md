@@ -27,8 +27,7 @@ ros2 service call /ugv/stop std_srvs/srv/Trigger
 Nav2 or a teleoperation node publishes `geometry_msgs/Twist` on `/cmd_vel`.
 The bridge publishes raw telemetry, fault flags, battery voltage, and e-stop
 state on `/ugv/telemetry_raw`, `/ugv/fault_flags`, `/ugv/battery_voltage`, and
-`/ugv/estop`. Raw ICM42688 acceleration and angular velocity are published as
-`sensor_msgs/Imu` on `/imu/data_raw`; orientation is intentionally left unset.
+`/ugv/estop`.
 
 The bridge sends wheel commands at 10 Hz. A stale `/cmd_vel` becomes zero PWM
 after 250 ms. If the bridge process or UART fails completely, STM32 stops the

@@ -2,7 +2,7 @@
  * 车端安全链。
  *
  * 本文件只负责把“当前是否允许继续运行”判定清楚：通信看门狗、急停、
- * 电池、IMU 和编码器异常都会锁存到 faultFlags。真正停车仍调用
+ * 电池和编码器异常都会锁存到 faultFlags。真正停车仍调用
  * DriveControl_Stop，让电机输出只有一个统一清零入口。
  */
 #include "Safety.h"
@@ -14,13 +14,11 @@ typedef struct
 {
 	uint32_t faultFlags;
 	uint32_t lastCommandMs;
-	uint32_t lastImuSampleMs;
 	uint32_t lastBatterySampleMs;
 	uint32_t lowBatterySinceMs;
 	uint32_t encoderFaultSinceMs[4];
 	uint8_t encoderFaultTiming[4];
 	uint8_t lowBatteryTiming;
-	uint8_t imuHealthy;
 	uint8_t emergencyStopActive;
 	uint8_t batteryAdcHealthy;
 	uint32_t currentTimeMs;
@@ -65,9 +63,32 @@ static void Safety_CheckEncoder(uint8_t index, int16_t command, int32_t measured
 	}
 }
 
+static void Safety_CheckBatteryVoltage(uint32_t nowMs)
+{
+	uint32_t batteryMv = PowerMonitor_GetBatteryMv();
+
+	if ((batteryMv != 0U) && (batteryMv < POWER_BATTERY_LOW_MV))
+	{
+		/* 启动不受电压限制；运行后持续低压才触发停机保护。 */
+		if (g_safety.lowBatteryTiming == 0U)
+		{
+			g_safety.lowBatteryTiming = 1U;
+			g_safety.lowBatterySinceMs = nowMs;
+		}
+		else if ((uint32_t)(nowMs - g_safety.lowBatterySinceMs) >=
+				 SAFETY_LOW_BATTERY_DELAY_MS)
+		{
+			g_safety.faultFlags |= SAFETY_FAULT_LOW_BATTERY;
+		}
+	}
+	else
+	{
+		g_safety.lowBatteryTiming = 0U;
+	}
+}
+
 static void Safety_UpdateInputs(uint32_t nowMs)
 {
-	uint32_t batteryMv;
 	g_safety.currentTimeMs = nowMs;
 
 	g_safety.emergencyStopActive = Safety_ReadEmergencyStop();
@@ -90,35 +111,9 @@ static void Safety_UpdateInputs(uint32_t nowMs)
 			g_safety.batteryAdcHealthy = 1U;
 		}
 	}
-	batteryMv = PowerMonitor_GetBatteryMv();
-	if ((batteryMv != 0U) && (batteryMv < POWER_BATTERY_LOW_MV))
-	{
-		/* 低压使用延迟确认，避免电机启动瞬间压降误触发。 */
-		if (g_safety.lowBatteryTiming == 0U)
-		{
-			g_safety.lowBatteryTiming = 1U;
-			g_safety.lowBatterySinceMs = nowMs;
-		}
-		else if ((uint32_t)(nowMs - g_safety.lowBatterySinceMs) >=
-				 SAFETY_LOW_BATTERY_DELAY_MS)
-		{
-			g_safety.faultFlags |= SAFETY_FAULT_LOW_BATTERY;
-		}
-	}
-	else
-	{
-		g_safety.lowBatteryTiming = 0U;
-	}
-
-	if ((g_safety.imuHealthy == 0U) ||
-		((uint32_t)(nowMs - g_safety.lastImuSampleMs) > SAFETY_IMU_TIMEOUT_MS))
-	{
-		/* IMU 是上层定位/姿态链路的基础输入，缺失时禁止继续运行。 */
-		g_safety.faultFlags |= SAFETY_FAULT_IMU;
-	}
 }
 
-void Safety_Init(uint32_t nowMs, uint8_t imuReady)
+void Safety_Init(uint32_t nowMs)
 {
 	uint8_t index;
 	uint32_t shift = BOARD_ESTOP_PIN * 2U;
@@ -133,11 +128,9 @@ void Safety_Init(uint32_t nowMs, uint8_t imuReady)
 	PowerMonitor_Init();
 	g_safety.faultFlags = 0U;
 	g_safety.lastCommandMs = nowMs;
-	g_safety.lastImuSampleMs = nowMs;
 	g_safety.lastBatterySampleMs = nowMs - 20U;
 	g_safety.lowBatterySinceMs = nowMs;
 	g_safety.lowBatteryTiming = 0U;
-	g_safety.imuHealthy = (imuReady != 0U) ? 1U : 0U;
 	g_safety.emergencyStopActive = 0U;
 	g_safety.batteryAdcHealthy = 0U;
 	g_safety.currentTimeMs = nowMs;
@@ -147,12 +140,6 @@ void Safety_Init(uint32_t nowMs, uint8_t imuReady)
 		g_safety.encoderFaultTiming[index] = 0U;
 	}
 	Safety_UpdateInputs(nowMs);
-}
-
-void Safety_NotifyImuSample(uint32_t nowMs)
-{
-	g_safety.lastImuSampleMs = nowMs;
-	g_safety.imuHealthy = 1U;
 }
 
 void Safety_KickCommunication(uint32_t nowMs)
@@ -166,6 +153,15 @@ void Safety_Update(uint32_t nowMs)
 
 	Safety_UpdateInputs(nowMs);
 	DriveControl_GetSnapshot(&drive);
+	if (drive.running != 0U)
+	{
+		Safety_CheckBatteryVoltage(nowMs);
+	}
+	else
+	{
+		/* 停车期间不累计低压时间，也不让电压阻止下一次 START。 */
+		g_safety.lowBatteryTiming = 0U;
+	}
 	if ((drive.running != 0U) &&
 		((uint32_t)(nowMs - g_safety.lastCommandMs) > SAFETY_COMM_TIMEOUT_MS))
 	{
@@ -197,18 +193,12 @@ void Safety_Update(uint32_t nowMs)
 
 uint8_t Safety_RequestStart(uint32_t nowMs)
 {
-	uint32_t batteryMv;
-
-	/* START 本身视为一次有效通信，可解除旧的通信超时；其他故障必须现场条件恢复。 */
-	g_safety.faultFlags &= ~SAFETY_FAULT_COMM_TIMEOUT;
+	/* START 解除通信超时和旧低压锁存；电压不再作为启动许可条件。 */
+	g_safety.faultFlags &= ~(SAFETY_FAULT_COMM_TIMEOUT | SAFETY_FAULT_LOW_BATTERY);
 	Safety_KickCommunication(nowMs);
 	Safety_UpdateInputs(nowMs);
-	batteryMv = PowerMonitor_GetBatteryMv();
 	if ((g_safety.emergencyStopActive != 0U) ||
-		(g_safety.batteryAdcHealthy == 0U) ||
-		(batteryMv < POWER_BATTERY_LOW_MV) ||
-		(g_safety.imuHealthy == 0U) ||
-		((uint32_t)(nowMs - g_safety.lastImuSampleMs) > SAFETY_IMU_TIMEOUT_MS))
+		(g_safety.batteryAdcHealthy == 0U))
 	{
 		return 0U;
 	}
@@ -217,18 +207,9 @@ uint8_t Safety_RequestStart(uint32_t nowMs)
 
 uint8_t Safety_ClearFaults(uint32_t nowMs)
 {
-	uint32_t minimumBatteryMv;
-
 	Safety_UpdateInputs(nowMs);
-	/* 低压故障清除使用恢复阈值，形成回差，避免电压在阈值附近反复启停。 */
-	minimumBatteryMv =
-		((g_safety.faultFlags & SAFETY_FAULT_LOW_BATTERY) != 0U) ?
-		POWER_BATTERY_RECOVER_MV : POWER_BATTERY_LOW_MV;
 	if ((g_safety.emergencyStopActive != 0U) ||
-		(PowerMonitor_GetBatteryMv() < minimumBatteryMv) ||
-		(g_safety.batteryAdcHealthy == 0U) ||
-		(g_safety.imuHealthy == 0U) ||
-		((uint32_t)(nowMs - g_safety.lastImuSampleMs) > SAFETY_IMU_TIMEOUT_MS))
+		(g_safety.batteryAdcHealthy == 0U))
 	{
 		return 0U;
 	}
@@ -254,5 +235,4 @@ void Safety_GetSnapshot(Safety_Snapshot *snapshot)
 	snapshot->watchdogAgeMs =
 		(uint32_t)(g_safety.currentTimeMs - g_safety.lastCommandMs);
 	snapshot->emergencyStopActive = g_safety.emergencyStopActive;
-	snapshot->imuHealthy = g_safety.imuHealthy;
 }

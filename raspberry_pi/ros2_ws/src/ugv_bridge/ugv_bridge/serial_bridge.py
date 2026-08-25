@@ -3,18 +3,16 @@ from __future__ import annotations
 # ROS2 到 STM32 文本串口协议的桥接节点。
 #
 # 节点订阅 /cmd_vel，把线速度/角速度换算为左右 PWM 周期下发；同时发布
-# STM32 遥测、故障、电池、急停和原始 IMU。所有会改变底盘运行状态的操作
+# STM32 遥测、故障、电池和急停。所有会改变底盘运行状态的操作
 # 都要经过 STM32 的 OK/ERR ACK，避免 ROS2 侧误以为车辆已经执行命令。
 
 import threading
 import time
-import math
 from typing import Dict, Optional, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool, Float32, String, UInt32
 from std_srvs.srv import Trigger
 
@@ -39,12 +37,11 @@ class UgVSerialBridge(Node):
     def __init__(self) -> None:
         super().__init__("ugv_serial_bridge")
         self.declare_parameter("port", "/dev/serial0")
-        self.declare_parameter("baud", 115200)
+        self.declare_parameter("baud", 9600)
         self.declare_parameter("command_rate_hz", 10.0)
         self.declare_parameter("cmd_vel_timeout_s", 0.25)
         self.declare_parameter("wheel_base_m", 0.28)
         self.declare_parameter("max_wheel_speed_mps", 0.80)
-        self.declare_parameter("imu_frame_id", "imu_link")
 
         self._port = str(self.get_parameter("port").value)
         self._baud = int(self.get_parameter("baud").value)
@@ -52,7 +49,6 @@ class UgVSerialBridge(Node):
         self._cmd_timeout = float(self.get_parameter("cmd_vel_timeout_s").value)
         self._wheel_base = float(self.get_parameter("wheel_base_m").value)
         self._max_wheel_speed = float(self.get_parameter("max_wheel_speed_mps").value)
-        self._imu_frame_id = str(self.get_parameter("imu_frame_id").value)
         if rate <= 0.0 or self._cmd_timeout <= 0.0:
             raise ValueError("command_rate_hz and cmd_vel_timeout_s must be positive")
 
@@ -71,7 +67,6 @@ class UgVSerialBridge(Node):
         self._fault_pub = self.create_publisher(UInt32, "ugv/fault_flags", 10)
         self._battery_pub = self.create_publisher(Float32, "ugv/battery_voltage", 10)
         self._estop_pub = self.create_publisher(Bool, "ugv/estop", 10)
-        self._imu_pub = self.create_publisher(Imu, "imu/data_raw", 20)
         self.create_subscription(Twist, "cmd_vel", self._on_cmd_vel, 10)
         self.create_service(Trigger, "ugv/start", self._on_start)
         self.create_service(Trigger, "ugv/stop", self._on_stop)
@@ -181,9 +176,6 @@ class UgVSerialBridge(Node):
             return
 
         prefix, fields = parse_frame(line)
-        if prefix == "I":
-            self._publish_imu(fields, line)
-            return
         if prefix not in ("T", "S"):
             return
         if "F" in fields:
@@ -213,31 +205,6 @@ class UgVSerialBridge(Node):
                 message = Bool()
                 message.data = estop
                 self._estop_pub.publish(message)
-
-    def _publish_imu(self, fields: Dict[str, str], line: str) -> None:
-        # 把 I 帧原始计数转换成 sensor_msgs/Imu 的 SI 单位原始数据。
-        required = ("AX", "AY", "AZ", "GX", "GY", "GZ")
-        if any(key not in fields for key in required):
-            self.get_logger().warning(f"Incomplete STM32 IMU frame: {line}")
-            return
-        try:
-            # Firmware writes ACCEL_CONFIG0/GYRO_CONFIG0 as 0x06: ODR=1 kHz and
-            # FS_SEL=0, which is +/-16 g and +/-2000 dps on ICM42688.
-            accel_scale = 16.0 * 9.80665 / 32768.0
-            gyro_scale = 2000.0 * math.pi / 180.0 / 32768.0
-            message = Imu()
-            message.header.stamp = self.get_clock().now().to_msg()
-            message.header.frame_id = self._imu_frame_id
-            message.orientation_covariance[0] = -1.0
-            message.linear_acceleration.x = int(fields["AX"], 0) * accel_scale
-            message.linear_acceleration.y = int(fields["AY"], 0) * accel_scale
-            message.linear_acceleration.z = int(fields["AZ"], 0) * accel_scale
-            message.angular_velocity.x = int(fields["GX"], 0) * gyro_scale
-            message.angular_velocity.y = int(fields["GY"], 0) * gyro_scale
-            message.angular_velocity.z = int(fields["GZ"], 0) * gyro_scale
-            self._imu_pub.publish(message)
-        except ValueError:
-            self.get_logger().warning(f"Malformed STM32 IMU frame: {line}")
 
     def _on_cmd_vel(self, message: Twist) -> None:
         # 缓存最新速度指令；真正下发由固定频率 timer 完成。

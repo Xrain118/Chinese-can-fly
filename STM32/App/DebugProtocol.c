@@ -289,7 +289,7 @@ static void DebugProtocol_SendDriveLine(const char *prefix)
 		"%s R=%d,M=%d,SP=%d,DL=%d,DR=%d,PL=%d,PR=%d,"
 		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,"
 		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d,"
-		"F=%lu,BV=%lu,ES=%d,IMU=%d,WD=%lu\r\n",
+		"F=%lu,BV=%lu,ES=%d,WD=%lu\r\n",
 		(char *)prefix,
 		snapshot.running,
 		(int)snapshot.mode,
@@ -313,7 +313,6 @@ static void DebugProtocol_SendDriveLine(const char *prefix)
 		(unsigned long)safety.faultFlags,
 		(unsigned long)safety.batteryMv,
 		safety.emergencyStopActive,
-		safety.imuHealthy,
 		(unsigned long)safety.watchdogAgeMs);
 	DebugProtocol_LineSend(&line);
 }
@@ -346,23 +345,6 @@ void DebugProtocol_SendState(void)
 void DebugProtocol_SendTelemetry(void)
 {
 	DebugProtocol_SendDriveLine("T");
-}
-
-void DebugProtocol_SendImuRaw(const ICM42688_RawSample *sample)
-{
-	if (sample == 0)
-	{
-		return;
-	}
-	(void)ProtocolTx_Printf(
-		"I AX=%d,AY=%d,AZ=%d,GX=%d,GY=%d,GZ=%d,TEMP=%d\r\n",
-		sample->accelX,
-		sample->accelY,
-		sample->accelZ,
-		sample->gyroX,
-		sample->gyroY,
-		sample->gyroZ,
-		sample->temperature);
 }
 
 static void DebugProtocol_SubmitCommand(const UgvCommand *command)
@@ -587,11 +569,6 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 			command.type = UGV_COMMAND_MODE;
 			command.first = DRIVE_MODE_STRAIGHT;
 			DebugProtocol_SubmitCommand(&command);
-		}
-		else if (DebugProtocol_StringEqual(tokens[1], "TRACK") != 0U)
-		{
-			/* 保留旧协议的明确错误码，避免上位机把 TRACK 当作普通参数错误。 */
-			DebugProtocol_SendErr("MODE", "TRACK_REMOVED");
 		}
 		else
 		{
