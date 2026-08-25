@@ -69,7 +69,7 @@
                 const key = String(rawKey).trim().toUpperCase();
                 if (!key) return;
                 /* 短字段已有长别名时不重复发一条曲线，避免图表里同一量出现两份。 */
-                const fullAlias = PID_CHART_ALIAS_KEYS[source]?.[key];
+                const fullAlias = PID_CHART_FIELD_ALIASES[source]?.[key];
                 if (fullAlias && values[fullAlias] !== undefined) return;
                 if (String(rawValue).trim() === "") return;
                 const value = Number(rawValue);

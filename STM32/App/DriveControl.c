@@ -13,6 +13,23 @@
 #include "Motor.h"
 #endif
 
+#define DRIVE_CONTROL_MILLISECONDS_PER_SECOND (1000U)
+
+/* 编码器参数范围与网页配置校验保持一致，集中定义后更容易核对协议契约。 */
+#define DRIVE_CONTROL_ENCODER_KP_MAX              (1.0f)
+#define DRIVE_CONTROL_ENCODER_KI_MAX              (10.0f)
+#define DRIVE_CONTROL_ENCODER_FULL_SCALE_MIN_CPS  (100)
+#define DRIVE_CONTROL_ENCODER_FULL_SCALE_MAX_CPS  (50000)
+#define DRIVE_CONTROL_ENCODER_SYNC_TOLERANCE_MAX  (50000)
+
+#define DRIVE_CONTROL_DEFAULT_ENCODER_KP             (0.020000f)
+#define DRIVE_CONTROL_DEFAULT_ENCODER_KI             (0.000000f)
+#define DRIVE_CONTROL_DEFAULT_ENCODER_LIMIT          (100)
+#define DRIVE_CONTROL_DEFAULT_FULL_SCALE_CPS         (5000)
+#define DRIVE_CONTROL_DEFAULT_ENCODER_SYNC_KP        (0.010000f)
+#define DRIVE_CONTROL_DEFAULT_SYNC_TOLERANCE_CPS     (50)
+#define DRIVE_CONTROL_DEFAULT_ENCODER_SYNC_LIMIT     (50)
+
 typedef struct
 {
 	SimplePID leftSpeedPid;
@@ -35,6 +52,19 @@ typedef struct
 /* 驱动控制状态由 ControlTask 串行访问；遥测通过快照读取当前值。 */
 static DriveControl_State g_drive;
 
+static void DriveControl_ResetSpeedControllers(void)
+{
+	/* 两侧速度 PI 总是成对重置，避免参数或模式切换后只残留一侧积分。 */
+	SimplePID_Reset(&g_drive.leftSpeedPid);
+	SimplePID_Reset(&g_drive.rightSpeedPid);
+}
+
+static void DriveControl_ClearEncoderSyncOutput(void)
+{
+	g_drive.snapshot.encoderSyncActive = 0U;
+	g_drive.snapshot.encoderSyncCorrection = 0;
+}
+
 static uint8_t DriveControl_CommandChangesDirection(int16_t oldCommand,
 													 int16_t newCommand)
 {
@@ -44,6 +74,24 @@ static uint8_t DriveControl_CommandChangesDirection(int16_t oldCommand,
 		return (oldCommand != newCommand) ? 1U : 0U;
 	}
 	return ((oldCommand > 0) != (newCommand > 0)) ? 1U : 0U;
+}
+
+static void DriveControl_SetDesiredPwm(int16_t leftPwm, int16_t rightPwm)
+{
+	int16_t previousLeft = g_drive.snapshot.desiredLeftPwm;
+	int16_t previousRight = g_drive.snapshot.desiredRightPwm;
+
+	/* 目标赋值和反向积分清理必须保持为一个操作，所有命令入口共用此规则。 */
+	g_drive.snapshot.desiredLeftPwm = leftPwm;
+	g_drive.snapshot.desiredRightPwm = rightPwm;
+	if (DriveControl_CommandChangesDirection(previousLeft, leftPwm) != 0U)
+	{
+		SimplePID_Reset(&g_drive.leftSpeedPid);
+	}
+	if (DriveControl_CommandChangesDirection(previousRight, rightPwm) != 0U)
+	{
+		SimplePID_Reset(&g_drive.rightSpeedPid);
+	}
 }
 
 static int16_t DriveControl_ClampPwm(int32_t value)
@@ -129,13 +177,13 @@ static void DriveControl_UpdateEncoderMeasurements(uint16_t elapsedMs)
 	g_drive.previousRightRearCount = rr;
 
 	g_drive.snapshot.leftFrontCps =
-		(int32_t)(((int64_t)leftFrontDelta * 1000LL) / elapsedMs);
+		(int32_t)(((int64_t)leftFrontDelta * DRIVE_CONTROL_MILLISECONDS_PER_SECOND) / elapsedMs);
 	g_drive.snapshot.leftRearCps =
-		(int32_t)(((int64_t)leftRearDelta * 1000LL) / elapsedMs);
+		(int32_t)(((int64_t)leftRearDelta * DRIVE_CONTROL_MILLISECONDS_PER_SECOND) / elapsedMs);
 	g_drive.snapshot.rightFrontCps =
-		(int32_t)(((int64_t)rightFrontDelta * 1000LL) / elapsedMs);
+		(int32_t)(((int64_t)rightFrontDelta * DRIVE_CONTROL_MILLISECONDS_PER_SECOND) / elapsedMs);
 	g_drive.snapshot.rightRearCps =
-		(int32_t)(((int64_t)rightRearDelta * 1000LL) / elapsedMs);
+		(int32_t)(((int64_t)rightRearDelta * DRIVE_CONTROL_MILLISECONDS_PER_SECOND) / elapsedMs);
 	g_drive.snapshot.leftMeasuredCps = (int32_t)(
 		((int64_t)g_drive.snapshot.leftFrontCps + g_drive.snapshot.leftRearCps) / 2LL);
 	g_drive.snapshot.rightMeasuredCps = (int32_t)(
@@ -267,13 +315,13 @@ void DriveControl_LoadDefaults(void)
 	g_drive.snapshot.encoderClosed = 0U;
 	g_drive.snapshot.encoderSyncEnabled = 0U;
 	g_drive.snapshot.speed = 0;
-	g_drive.encoderKp = 0.020000f;
-	g_drive.encoderKi = 0.000000f;
-	g_drive.encoderLimit = 100;
-	g_drive.encoderFullScaleCps = 5000;
-	g_drive.encoderSyncKp = 0.010000f;
-	g_drive.encoderSyncToleranceCps = 50;
-	g_drive.encoderSyncLimit = 50;
+	g_drive.encoderKp = DRIVE_CONTROL_DEFAULT_ENCODER_KP;
+	g_drive.encoderKi = DRIVE_CONTROL_DEFAULT_ENCODER_KI;
+	g_drive.encoderLimit = DRIVE_CONTROL_DEFAULT_ENCODER_LIMIT;
+	g_drive.encoderFullScaleCps = DRIVE_CONTROL_DEFAULT_FULL_SCALE_CPS;
+	g_drive.encoderSyncKp = DRIVE_CONTROL_DEFAULT_ENCODER_SYNC_KP;
+	g_drive.encoderSyncToleranceCps = DRIVE_CONTROL_DEFAULT_SYNC_TOLERANCE_CPS;
+	g_drive.encoderSyncLimit = DRIVE_CONTROL_DEFAULT_ENCODER_SYNC_LIMIT;
 
 	SimplePID_Init(&g_drive.leftSpeedPid, g_drive.encoderKp,
 				   g_drive.encoderKi, (float)g_drive.encoderLimit);
@@ -293,8 +341,7 @@ void DriveControl_Init(void)
 
 void DriveControl_Reset(void)
 {
-	SimplePID_Reset(&g_drive.leftSpeedPid);
-	SimplePID_Reset(&g_drive.rightSpeedPid);
+	DriveControl_ResetSpeedControllers();
 	g_drive.encoderSynchronized = 0U;
 	g_drive.snapshot.desiredLeftPwm = 0;
 	g_drive.snapshot.desiredRightPwm = 0;
@@ -309,8 +356,7 @@ void DriveControl_Reset(void)
 	g_drive.snapshot.leftMeasuredCps = 0;
 	g_drive.snapshot.rightMeasuredCps = 0;
 	g_drive.snapshot.encoderSyncError = 0;
-	g_drive.snapshot.encoderSyncCorrection = 0;
-	g_drive.snapshot.encoderSyncActive = 0U;
+	DriveControl_ClearEncoderSyncOutput();
 	DriveControl_WriteMotors(0, 0);
 }
 
@@ -334,16 +380,12 @@ uint8_t DriveControl_SetMode(DriveControl_Mode mode)
 		return 0U;
 	}
 	g_drive.snapshot.mode = mode;
-	SimplePID_Reset(&g_drive.leftSpeedPid);
-	SimplePID_Reset(&g_drive.rightSpeedPid);
+	DriveControl_ResetSpeedControllers();
 	return 1U;
 }
 
 uint8_t DriveControl_SetSpeed(int16_t speed)
 {
-	int16_t previousLeft;
-	int16_t previousRight;
-
 	if ((speed < -DRIVE_CONTROL_PWM_MAX) || (speed > DRIVE_CONTROL_PWM_MAX))
 	{
 		return 0U;
@@ -352,27 +394,13 @@ uint8_t DriveControl_SetSpeed(int16_t speed)
 	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
 	{
 		/* STRAIGHT 模式把 SPEED 同时分配给左右轮；DIRECT 模式仅保存基准速度值。 */
-		previousLeft = g_drive.snapshot.desiredLeftPwm;
-		previousRight = g_drive.snapshot.desiredRightPwm;
-		g_drive.snapshot.desiredLeftPwm = speed;
-		g_drive.snapshot.desiredRightPwm = speed;
-		if (DriveControl_CommandChangesDirection(previousLeft, speed) != 0U)
-		{
-			SimplePID_Reset(&g_drive.leftSpeedPid);
-		}
-		if (DriveControl_CommandChangesDirection(previousRight, speed) != 0U)
-		{
-			SimplePID_Reset(&g_drive.rightSpeedPid);
-		}
+		DriveControl_SetDesiredPwm(speed, speed);
 	}
 	return 1U;
 }
 
 uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm)
 {
-	int16_t previousLeft = g_drive.snapshot.desiredLeftPwm;
-	int16_t previousRight = g_drive.snapshot.desiredRightPwm;
-
 	if ((leftPwm < -DRIVE_CONTROL_PWM_MAX) || (leftPwm > DRIVE_CONTROL_PWM_MAX) ||
 		(rightPwm < -DRIVE_CONTROL_PWM_MAX) || (rightPwm > DRIVE_CONTROL_PWM_MAX))
 	{
@@ -380,16 +408,7 @@ uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm)
 	}
 	/* PWM/MOVE 是显式左右轮命令，收到后立即切回 DIRECT，避免被 SPEED 自动覆盖。 */
 	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
-	g_drive.snapshot.desiredLeftPwm = leftPwm;
-	g_drive.snapshot.desiredRightPwm = rightPwm;
-	if (DriveControl_CommandChangesDirection(previousLeft, leftPwm) != 0U)
-	{
-		SimplePID_Reset(&g_drive.leftSpeedPid);
-	}
-	if (DriveControl_CommandChangesDirection(previousRight, rightPwm) != 0U)
-	{
-		SimplePID_Reset(&g_drive.rightSpeedPid);
-	}
+	DriveControl_SetDesiredPwm(leftPwm, rightPwm);
 	return 1U;
 }
 
@@ -397,16 +416,15 @@ void DriveControl_SetEncoderClosed(uint8_t enabled)
 {
 	g_drive.snapshot.encoderClosed = (enabled != 0U) ? 1U : 0U;
 	/* 开关速度环时重新同步编码器基准，首帧不用于闭环修正。 */
-	SimplePID_Reset(&g_drive.leftSpeedPid);
-	SimplePID_Reset(&g_drive.rightSpeedPid);
+	DriveControl_ResetSpeedControllers();
 	g_drive.encoderSynchronized = 0U;
-	g_drive.snapshot.encoderSyncActive = 0U;
-	g_drive.snapshot.encoderSyncCorrection = 0;
+	DriveControl_ClearEncoderSyncOutput();
 }
 
 uint8_t DriveControl_SetEncoderGains(float kp, float ki)
 {
-	if ((kp < 0.0f) || (kp > 1.0f) || (ki < 0.0f) || (ki > 10.0f))
+	if ((kp < 0.0f) || (kp > DRIVE_CONTROL_ENCODER_KP_MAX) ||
+		(ki < 0.0f) || (ki > DRIVE_CONTROL_ENCODER_KI_MAX))
 	{
 		return 0U;
 	}
@@ -419,7 +437,8 @@ uint8_t DriveControl_SetEncoderGains(float kp, float ki)
 
 uint8_t DriveControl_SetEncoderFullScaleCps(int32_t fullScaleCps)
 {
-	if ((fullScaleCps < 100) || (fullScaleCps > 50000))
+	if ((fullScaleCps < DRIVE_CONTROL_ENCODER_FULL_SCALE_MIN_CPS) ||
+		(fullScaleCps > DRIVE_CONTROL_ENCODER_FULL_SCALE_MAX_CPS))
 	{
 		return 0U;
 	}
@@ -442,14 +461,14 @@ uint8_t DriveControl_SetEncoderLimit(int16_t limit)
 void DriveControl_SetEncoderSyncEnabled(uint8_t enabled)
 {
 	g_drive.snapshot.encoderSyncEnabled = (enabled != 0U) ? 1U : 0U;
-	g_drive.snapshot.encoderSyncActive = 0U;
-	g_drive.snapshot.encoderSyncCorrection = 0;
+	DriveControl_ClearEncoderSyncOutput();
 }
 
 uint8_t DriveControl_SetEncoderSync(float kp, int32_t toleranceCps, int16_t limit)
 {
-	if ((kp < 0.0f) || (kp > 1.0f) ||
-		(toleranceCps < 0) || (toleranceCps > 50000) ||
+	if ((kp < 0.0f) || (kp > DRIVE_CONTROL_ENCODER_KP_MAX) ||
+		(toleranceCps < 0) ||
+		(toleranceCps > DRIVE_CONTROL_ENCODER_SYNC_TOLERANCE_MAX) ||
 		(limit < 0) || (limit > DRIVE_CONTROL_PWM_MAX))
 	{
 		return 0U;
@@ -457,8 +476,7 @@ uint8_t DriveControl_SetEncoderSync(float kp, int32_t toleranceCps, int16_t limi
 	g_drive.encoderSyncKp = kp;
 	g_drive.encoderSyncToleranceCps = toleranceCps;
 	g_drive.encoderSyncLimit = limit;
-	g_drive.snapshot.encoderSyncActive = 0U;
-	g_drive.snapshot.encoderSyncCorrection = 0;
+	DriveControl_ClearEncoderSyncOutput();
 	return 1U;
 }
 
@@ -470,7 +488,7 @@ void DriveControl_Update(uint16_t elapsedMs)
 	{
 		elapsedMs = 1U;
 	}
-	dtSeconds = (float)elapsedMs / 1000.0f;
+	dtSeconds = (float)elapsedMs / (float)DRIVE_CONTROL_MILLISECONDS_PER_SECOND;
 
 	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
 	{

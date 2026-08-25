@@ -5,14 +5,16 @@ from __future__ import annotations
 # 这里不依赖 ROS2 或串口对象，方便单元测试覆盖协议解析和 cmd_vel 到 PWM
 # 的换算。serial_bridge.py 负责线程、服务和实际 I/O。
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, FrozenSet, Optional, Tuple
 
 
 PWM_MAX = 1000
+TRUE_FIELD_VALUES: FrozenSet[str] = frozenset(("1", "ON", "TRUE"))
+FALSE_FIELD_VALUES: FrozenSet[str] = frozenset(("0", "OFF", "FALSE"))
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
-    # 把数值限制到闭区间内，用于 PWM 饱和保护。
+    """把数值限制到闭区间内，用于 PWM 饱和保护。"""
     return max(minimum, min(maximum, value))
 
 
@@ -22,9 +24,11 @@ def twist_to_pwm(
     wheel_base_m: float,
     max_wheel_speed_mps: float,
 ) -> Tuple[int, int]:
-    # 把 ROS2 Twist 转成 STM32 使用的左右侧 signed PWM。
-    # 差速模型：左轮线速度 = v - w * 轮距 / 2，右轮线速度 = v + w * 轮距 / 2。
-    # max_wheel_speed_mps 是实测 PWM=1000 时的车轮线速度，不是电机空载转速。
+    """把 ROS2 Twist 转成 STM32 使用的左右侧有符号 PWM。
+
+    差速模型：左轮线速度 = v - w * 轮距 / 2，右轮线速度 = v + w * 轮距 / 2。
+    ``max_wheel_speed_mps`` 是实测 PWM=1000 时的车轮线速度，不是电机空载转速。
+    """
     if wheel_base_m <= 0.0 or max_wheel_speed_mps <= 0.0:
         raise ValueError("wheel_base_m and max_wheel_speed_mps must be positive")
 
@@ -37,7 +41,7 @@ def twist_to_pwm(
 
 
 def parse_frame(line: str) -> Tuple[str, Dict[str, str]]:
-    # 解析一行 STM32 帧，返回大写前缀和 KEY=VALUE 字段表。
+    """解析一行 STM32 帧，返回大写前缀和 ``KEY=VALUE`` 字段表。"""
     text = line.strip()
     if not text:
         return "", {}
@@ -55,7 +59,7 @@ def parse_frame(line: str) -> Tuple[str, Dict[str, str]]:
 
 
 def parse_ack(line: str) -> Optional[Tuple[bool, str, str]]:
-    # 解析 OK/ERR 回执；不是回执帧时返回 None。
+    """解析 OK/ERR 回执；不是回执帧时返回 ``None``。"""
     prefix, fields = parse_frame(line)
     if prefix not in ("OK", "ERR") or "C" not in fields:
         return None
@@ -79,8 +83,8 @@ def parse_bool_field(fields: Dict[str, str], key: str) -> Optional[bool]:
     if value is None:
         return None
     normalized = value.strip().upper()
-    if normalized in ("1", "ON", "TRUE"):
+    if normalized in TRUE_FIELD_VALUES:
         return True
-    if normalized in ("0", "OFF", "FALSE"):
+    if normalized in FALSE_FIELD_VALUES:
         return False
     return None

@@ -39,6 +39,20 @@ static StackType_t g_protocolTaskStack[UGV_PROTOCOL_STACK_WORDS];
 static StackType_t g_telemetryTaskStack[UGV_TELEMETRY_STACK_WORDS];
 static StackType_t g_serialTaskStack[UGV_SERIAL_STACK_WORDS];
 
+static void UgvTasks_ReplyCommandResult(const UgvCommand *command,
+										  uint8_t accepted)
+{
+	/* 参数型命令统一用 ARG 表示校验失败，避免 switch 各分支维护两套回包逻辑。 */
+	if (accepted != 0U)
+	{
+		DebugProtocol_SendOk(command->responseName);
+	}
+	else
+	{
+		DebugProtocol_SendErr(command->responseName, "ARG");
+	}
+}
+
 /* ControlTask 是 DriveControl 的唯一写入者，避免多任务并发改车状态。 */
 static void UgvTasks_HandleCommand(const UgvCommand *command)
 {
@@ -74,37 +88,22 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 		break;
 
 	case UGV_COMMAND_MODE:
-		if (DriveControl_SetMode((DriveControl_Mode)command->first) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetMode((DriveControl_Mode)command->first));
 		break;
 
 	case UGV_COMMAND_WHEEL_PWM:
-		if (DriveControl_SetWheelPwm((int16_t)command->first,
-									 (int16_t)command->second) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetWheelPwm((int16_t)command->first,
+									 (int16_t)command->second));
 		break;
 
 	case UGV_COMMAND_SPEED:
-		if (DriveControl_SetSpeed((int16_t)command->first) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetSpeed((int16_t)command->first));
 		break;
 
 	case UGV_COMMAND_ENCODER_ENABLE:
@@ -113,36 +112,21 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 		break;
 
 	case UGV_COMMAND_ENCODER_GAINS:
-		if (DriveControl_SetEncoderGains(command->kp, command->ki) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetEncoderGains(command->kp, command->ki));
 		break;
 
 	case UGV_COMMAND_ENCODER_FULL_SCALE:
-		if (DriveControl_SetEncoderFullScaleCps(command->first) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetEncoderFullScaleCps(command->first));
 		break;
 
 	case UGV_COMMAND_ENCODER_LIMIT:
-		if (DriveControl_SetEncoderLimit((int16_t)command->first) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetEncoderLimit((int16_t)command->first));
 		break;
 
 	case UGV_COMMAND_ENCODER_SYNC_ENABLE:
@@ -151,16 +135,11 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 		break;
 
 	case UGV_COMMAND_ENCODER_SYNC_PARAMS:
-		if (DriveControl_SetEncoderSync(command->kp,
+		UgvTasks_ReplyCommandResult(
+			command,
+			DriveControl_SetEncoderSync(command->kp,
 										command->first,
-										(int16_t)command->second) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ARG");
-		}
+										(int16_t)command->second));
 		break;
 
 	default:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 import rclpy
@@ -22,35 +23,29 @@ from serial import SerialException
 from .protocol import parse_ack, parse_bool_field, parse_frame, parse_int_field, twist_to_pwm
 
 
-class PendingAck:
-    # 等待某个命令 ACK 的小对象，由串口读线程唤醒服务回调线程。
+SERIAL_READ_TIMEOUT_S = 0.1
+SERIAL_RECONNECT_DELAY_S = 1.0
+COMMAND_ACK_TIMEOUT_S = 0.6
+READER_JOIN_TIMEOUT_S = 1.0
+MILLIVOLTS_PER_VOLT = 1000.0
 
-    def __init__(self) -> None:
-        self.event = threading.Event()
-        self.success = False
-        self.message = "timeout"
+
+@dataclass
+class PendingAck:
+    """等待一个命令回执，由串口读线程唤醒 ROS2 服务回调线程。"""
+
+    event: threading.Event = field(default_factory=threading.Event)
+    success: bool = False
+    message: str = "timeout"
 
 
 class UgVSerialBridge(Node):
-    # 单节点桥接：一个读线程负责串口输入，ROS2 timer 负责周期输出 PWM。
+    """在 ROS2 话题/服务与 STM32 文本串口协议之间进行双向桥接。"""
 
     def __init__(self) -> None:
         super().__init__("ugv_serial_bridge")
-        self.declare_parameter("port", "/dev/serial0")
-        self.declare_parameter("baud", 9600)
-        self.declare_parameter("command_rate_hz", 10.0)
-        self.declare_parameter("cmd_vel_timeout_s", 0.25)
-        self.declare_parameter("wheel_base_m", 0.28)
-        self.declare_parameter("max_wheel_speed_mps", 0.80)
-
-        self._port = str(self.get_parameter("port").value)
-        self._baud = int(self.get_parameter("baud").value)
-        rate = float(self.get_parameter("command_rate_hz").value)
-        self._cmd_timeout = float(self.get_parameter("cmd_vel_timeout_s").value)
-        self._wheel_base = float(self.get_parameter("wheel_base_m").value)
-        self._max_wheel_speed = float(self.get_parameter("max_wheel_speed_mps").value)
-        if rate <= 0.0 or self._cmd_timeout <= 0.0:
-            raise ValueError("command_rate_hz and cmd_vel_timeout_s must be positive")
+        self._declare_parameters()
+        command_rate_hz = self._load_parameters()
 
         self._serial: Optional[serial.Serial] = None
         # serial_lock 保护串口对象生命周期；pending_lock 保护 ACK 等待表。
@@ -63,6 +58,32 @@ class UgVSerialBridge(Node):
         self._last_cmd_time = time.monotonic()
         self._requested_pwm: Tuple[int, int] = (0, 0)
 
+        self._create_ros_interfaces(command_rate_hz)
+        self._reader.start()
+
+    def _declare_parameters(self) -> None:
+        """集中声明外部配置，参数名与 YAML 文件保持一一对应。"""
+        self.declare_parameter("port", "/dev/serial0")
+        self.declare_parameter("baud", 9600)
+        self.declare_parameter("command_rate_hz", 10.0)
+        self.declare_parameter("cmd_vel_timeout_s", 0.25)
+        self.declare_parameter("wheel_base_m", 0.28)
+        self.declare_parameter("max_wheel_speed_mps", 0.80)
+
+    def _load_parameters(self) -> float:
+        """读取并校验参数，返回创建周期定时器所需的发送频率。"""
+        self._port = str(self.get_parameter("port").value)
+        self._baud = int(self.get_parameter("baud").value)
+        rate = float(self.get_parameter("command_rate_hz").value)
+        self._cmd_timeout = float(self.get_parameter("cmd_vel_timeout_s").value)
+        self._wheel_base = float(self.get_parameter("wheel_base_m").value)
+        self._max_wheel_speed = float(self.get_parameter("max_wheel_speed_mps").value)
+        if rate <= 0.0 or self._cmd_timeout <= 0.0:
+            raise ValueError("command_rate_hz and cmd_vel_timeout_s must be positive")
+        return rate
+
+    def _create_ros_interfaces(self, command_rate_hz: float) -> None:
+        """创建话题、服务和定时器；此方法不启动后台读线程。"""
         self._raw_pub = self.create_publisher(String, "ugv/telemetry_raw", 20)
         self._fault_pub = self.create_publisher(UInt32, "ugv/fault_flags", 10)
         self._battery_pub = self.create_publisher(Float32, "ugv/battery_voltage", 10)
@@ -71,15 +92,18 @@ class UgVSerialBridge(Node):
         self.create_service(Trigger, "ugv/start", self._on_start)
         self.create_service(Trigger, "ugv/stop", self._on_stop)
         self.create_service(Trigger, "ugv/clear_faults", self._on_clear_faults)
-        self.create_timer(1.0 / rate, self._command_timer)
-        self._reader.start()
+        self.create_timer(1.0 / command_rate_hz, self._command_timer)
 
     def _connect(self) -> bool:
         # 确保串口已打开；失败时让读线程稍后重试。
         if self._serial is not None and self._serial.is_open:
             return True
         try:
-            connection = serial.Serial(self._port, self._baud, timeout=0.1)
+            connection = serial.Serial(
+                self._port,
+                self._baud,
+                timeout=SERIAL_READ_TIMEOUT_S,
+            )
             with self._serial_lock:
                 self._serial = connection
             self.get_logger().info(f"Connected to STM32 on {self._port} at {self._baud} baud")
@@ -122,7 +146,12 @@ class UgVSerialBridge(Node):
         self._armed = False
         self._requested_pwm = (0, 0)
 
-    def _command_with_ack(self, command: str, ack_name: str, timeout: float = 0.6) -> Tuple[bool, str]:
+    def _command_with_ack(
+        self,
+        command: str,
+        ack_name: str,
+        timeout: float = COMMAND_ACK_TIMEOUT_S,
+    ) -> Tuple[bool, str]:
         # 发送命令并等待指定 C 字段的 OK/ERR，服务回调用它同步返回结果。
         pending = PendingAck()
         key = ack_name.upper()
@@ -145,7 +174,7 @@ class UgVSerialBridge(Node):
         # 后台读线程：负责自动重连、按行读取、把 ACK/遥测分发出去。
         while not self._stop_reader.is_set():
             if not self._connect():
-                self._stop_reader.wait(1.0)
+                self._stop_reader.wait(SERIAL_RECONNECT_DELAY_S)
                 continue
             try:
                 assert self._serial is not None
@@ -178,10 +207,16 @@ class UgVSerialBridge(Node):
         prefix, fields = parse_frame(line)
         if prefix not in ("T", "S"):
             return
+        self._publish_fault(fields, line)
+        self._publish_battery(fields, line)
+        self._publish_estop(fields, line)
+
+    def _publish_fault(self, fields: Dict[str, str], source_line: str) -> None:
+        """发布故障位；格式非法时保守丢弃该字段并保留原始帧。"""
         if "F" in fields:
             faults = parse_int_field(fields, "F")
             if faults is None:
-                self.get_logger().warning(f"Malformed STM32 fault field: {line}")
+                self.get_logger().warning(f"Malformed STM32 fault field: {source_line}")
             else:
                 message = UInt32()
                 message.data = faults
@@ -189,18 +224,24 @@ class UgVSerialBridge(Node):
                 if faults != 0:
                     # STM32 已经锁存故障，ROS2 侧停止继续下发旧的运动需求。
                     self._disarm()
+
+    def _publish_battery(self, fields: Dict[str, str], source_line: str) -> None:
+        """把固件上报的毫伏值转换为伏特后发布。"""
         if "BV" in fields:
             battery_mv = parse_int_field(fields, "BV")
             if battery_mv is None:
-                self.get_logger().warning(f"Malformed STM32 battery field: {line}")
+                self.get_logger().warning(f"Malformed STM32 battery field: {source_line}")
             else:
                 message = Float32()
-                message.data = battery_mv / 1000.0
+                message.data = battery_mv / MILLIVOLTS_PER_VOLT
                 self._battery_pub.publish(message)
+
+    def _publish_estop(self, fields: Dict[str, str], source_line: str) -> None:
+        """发布急停状态，只接受协议工具明确识别的布尔文本。"""
         if "ES" in fields:
             estop = parse_bool_field(fields, "ES")
             if estop is None:
-                self.get_logger().warning(f"Malformed STM32 estop field: {line}")
+                self.get_logger().warning(f"Malformed STM32 estop field: {source_line}")
             else:
                 message = Bool()
                 message.data = estop
@@ -254,7 +295,7 @@ class UgVSerialBridge(Node):
         self._disarm()
         self._write_line("STOP")
         self._stop_reader.set()
-        self._reader.join(timeout=1.0)
+        self._reader.join(timeout=READER_JOIN_TIMEOUT_S)
         self._disconnect()
         return super().destroy_node()
 

@@ -35,6 +35,29 @@
             document.getElementById(id).value = value;
         }
 
+        function splitProtocolFrame(rawLine) {
+            /* 只在这里拆分“前缀 + 负载”，各帧分支不再重复处理空格和大小写。 */
+            const line = String(rawLine).trim();
+            const firstSpace = line.indexOf(" ");
+            return {
+                line,
+                prefix: (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase(),
+                payload: firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim()
+            };
+        }
+
+        function parseFrameValues(payload, frameType) {
+            return expandKeyAliases(parseKeyValues(payload), FRAME_FIELD_ALIASES[frameType] || {});
+        }
+
+        function applyRunSnapshot(values) {
+            /* T 与 S 都携带运行态公共字段，统一入口可保证两种帧的页面表现一致。 */
+            if (values.RUN !== undefined) setRunState(values.RUN);
+            if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
+            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            applyWheelAndSyncTelemetry(values);
+        }
+
         function applyWheelAndSyncTelemetry(values) {
             /* 四轮 CPS、左右平均 CPS、目标 CPS 和同步修正都来自同一帧快照。 */
             const fieldIds = {
@@ -71,26 +94,20 @@
 
         function applyTelemetry(values) {
             /* T 帧是周期运行遥测：更新实时值，但不认为配置已同步。 */
-            if (values.RUN !== undefined) setRunState(values.RUN);
-            if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
-            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
-            applyWheelAndSyncTelemetry(values);
+            applyRunSnapshot(values);
 
             lastTelemetryAt = Date.now();
             document.getElementById("telemetryAge").textContent = "刚刚";
         }
 
         function applyState(values) {
-            if (values.RUN !== undefined) setRunState(values.RUN);
-            if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
             /* S 帧只同步运行快照；配置同步以独立 CFG 帧为准。 */
-            if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
+            applyRunSnapshot(values);
             if (values.ENC_SYNC_ENABLED !== undefined) {
                 setEncoderSyncState(values.ENC_SYNC_ENABLED, values.ENC_SYNC_ACTIVE ?? encoderSyncActive);
             }
             setInputValue("speedInput", values.SPEED);
             if (values.SPEED !== undefined) setBaseSpeed(values.SPEED, true);
-            applyWheelAndSyncTelemetry(values);
         }
 
         function applyConfig(values) {
@@ -110,12 +127,9 @@
         }
 
         function processLine(rawLine) {
-            const line = rawLine.trim();
+            const { line, prefix, payload } = splitProtocolFrame(rawLine);
             if (!line) return;
 
-            const firstSpace = line.indexOf(" ");
-            const prefix = (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase();
-            const payload = firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim();
             /* OK/ERR 的 C 字段用于匹配 pendingCommands。 */
             const responseValues = (prefix === "OK" || prefix === "ERR") ? parseKeyValues(payload) : {};
             const responseCommand = responseValues.CMD ?? responseValues.C;
@@ -123,30 +137,20 @@
             appendLog("RX", line, "rx");
 
             if (prefix === "T" || prefix === "TEL") {
-                const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "RUN", M: "DRIVE_MODE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
-                    EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
-                });
+                const values = parseFrameValues(payload, "telemetry");
                 applyTelemetry(values);
                 publishPidChartValues("telemetry", values);
                 return;
             }
             if (prefix === "S" || prefix === "STATE") {
                 /* 状态帧更新运行快照；配置字段由 CFG 处理。 */
-                const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "RUN", M: "DRIVE_MODE", SP: "SPEED", EC: "ENCODER_CLOSED",
-                    PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE",
-                    EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
-                });
+                const values = parseFrameValues(payload, "state");
                 applyState(values);
                 publishPidChartValues("state", values);
                 return;
             }
             if (prefix === "CFG" || prefix === "CONFIG") {
-                const values = expandKeyAliases(parseKeyValues(payload), {
-                    EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT",
-                    ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
-                });
+                const values = parseFrameValues(payload, "config");
                 applyConfig(values);
                 publishPidChartValues("state", values);
                 const pendingGet = pendingCommands.find(item => item.expectedName === "GET");

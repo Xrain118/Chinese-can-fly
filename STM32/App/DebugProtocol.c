@@ -23,6 +23,21 @@ typedef struct
 	uint8_t truncated;
 } DebugProtocol_LineBuilder;
 
+typedef struct
+{
+	const char *name;
+	UgvCommand_Type type;
+} DebugProtocol_SimpleCommand;
+
+/* 无参数命令使用声明式映射，新增同类命令时不必再复制一整段 if 分支。 */
+static const DebugProtocol_SimpleCommand g_simpleCommands[] =
+{
+	{"START", UGV_COMMAND_START},
+	{"STOP", UGV_COMMAND_STOP},
+	{"RESET", UGV_COMMAND_RESET},
+	{"DEFAULTS", UGV_COMMAND_DEFAULTS}
+};
+
 /* 接收端只缓存一行 ASCII 文本；逗号、等号会统一归一化为空格便于复用命令解析。 */
 static char g_line[DEBUG_PROTOCOL_LINE_SIZE];
 static uint8_t g_lineLength;
@@ -60,6 +75,28 @@ static void DebugProtocol_CopyCommandName(char *target, uint8_t targetSize,
 		}
 	}
 	target[index] = '\0';
+}
+
+static void DebugProtocol_InitCommand(UgvCommand *command,
+									  const char *responseName)
+{
+	if (command == 0)
+	{
+		return;
+	}
+
+	/* 显式清空所有通用参数槽，避免不同命令复用结构时携带无关旧值。 */
+	command->type = UGV_COMMAND_START;
+	command->responseName[0] = '\0';
+	command->first = 0;
+	command->second = 0;
+	command->third = 0;
+	command->kp = 0.0f;
+	command->ki = 0.0f;
+	command->enabled = 0U;
+	DebugProtocol_CopyCommandName(command->responseName,
+								  sizeof(command->responseName),
+								  responseName);
 }
 
 static void DebugProtocol_NormalizeLine(void)
@@ -194,6 +231,31 @@ static uint8_t DebugProtocol_ParseFloat(const char *text, float *value)
 	}
 	*value = (negative != 0U) ? -result : result;
 	return 1U;
+}
+
+static uint8_t DebugProtocol_ParseSwitch(const char *text, uint8_t *enabled)
+{
+	if ((text == 0) || (enabled == 0))
+	{
+		return 0U;
+	}
+	if (DebugProtocol_StringEqual(text, "ON") != 0U)
+	{
+		*enabled = 1U;
+		return 1U;
+	}
+	if (DebugProtocol_StringEqual(text, "OFF") != 0U)
+	{
+		*enabled = 0U;
+		return 1U;
+	}
+	return 0U;
+}
+
+static uint8_t DebugProtocol_IsPwmValue(int32_t value)
+{
+	return ((value >= -DRIVE_CONTROL_PWM_MAX) &&
+			(value <= DRIVE_CONTROL_PWM_MAX)) ? 1U : 0U;
 }
 
 static void DebugProtocol_LineInit(DebugProtocol_LineBuilder *builder)
@@ -338,6 +400,10 @@ void DebugProtocol_SendTelemetry(void)
 
 static void DebugProtocol_SubmitCommand(const UgvCommand *command)
 {
+	if (command == 0)
+	{
+		return;
+	}
 	if (UgvCommandQueue_Send(command) == 0U)
 	{
 		/* 队列满说明控制任务暂时跟不上，直接拒绝本条命令而不是阻塞协议任务。 */
@@ -345,22 +411,43 @@ static void DebugProtocol_SubmitCommand(const UgvCommand *command)
 	}
 }
 
-static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
+static void DebugProtocol_ProcessEncoderSyncCommand(UgvCommand *command,
+												 char *tokens[],
+												 uint8_t count)
 {
-	UgvCommand command =
-	{
-		UGV_COMMAND_START,
-		{0},
-		0,
-		0,
-		0,
-		0.0f,
-		0.0f,
-		0U
-	};
-	int32_t ivalue;
 	int32_t syncTolerance;
 	int32_t syncLimit;
+	float kp;
+
+	/* ENC SYNC 既有开关子命令，也有参数子命令，必须先尝试识别 ON/OFF。 */
+	if ((count >= 3U) &&
+		(DebugProtocol_ParseSwitch(tokens[2], &command->enabled) != 0U))
+	{
+		command->type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
+		DebugProtocol_SubmitCommand(command);
+		return;
+	}
+	if ((count < 5U) ||
+		(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
+		(DebugProtocol_ParseInt(tokens[3], &syncTolerance) == 0U) ||
+		(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
+		(syncLimit < 0) || (syncLimit > DRIVE_CONTROL_PWM_MAX))
+	{
+		DebugProtocol_SendErr("ENC", "ARG");
+		return;
+	}
+
+	command->type = UGV_COMMAND_ENCODER_SYNC_PARAMS;
+	command->kp = kp;
+	command->first = syncTolerance;
+	command->second = syncLimit;
+	DebugProtocol_SubmitCommand(command);
+}
+
+static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
+{
+	UgvCommand command;
+	int32_t ivalue;
 	float kp;
 	float ki;
 
@@ -369,18 +456,10 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 		DebugProtocol_SendErr("ENC", "ARG");
 		return;
 	}
-	DebugProtocol_CopyCommandName(command.responseName, sizeof(command.responseName), "ENC");
-	if (DebugProtocol_StringEqual(tokens[1], "ON") != 0U)
+	DebugProtocol_InitCommand(&command, "ENC");
+	if (DebugProtocol_ParseSwitch(tokens[1], &command.enabled) != 0U)
 	{
 		command.type = UGV_COMMAND_ENCODER_ENABLE;
-		command.enabled = 1U;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[1], "OFF") != 0U)
-	{
-		command.type = UGV_COMMAND_ENCODER_ENABLE;
-		command.enabled = 0U;
 		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
@@ -432,89 +511,112 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 	}
 	if (DebugProtocol_StringEqual(tokens[1], "SYNC") != 0U)
 	{
-		/* ENC SYNC 既有开关子命令，也有参数子命令，解析顺序必须先识别 ON/OFF。 */
-		if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "ON") != 0U))
-		{
-			command.type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
-			command.enabled = 1U;
-			DebugProtocol_SubmitCommand(&command);
-			return;
-		}
-		if ((count >= 3U) && (DebugProtocol_StringEqual(tokens[2], "OFF") != 0U))
-		{
-			command.type = UGV_COMMAND_ENCODER_SYNC_ENABLE;
-			command.enabled = 0U;
-			DebugProtocol_SubmitCommand(&command);
-			return;
-		}
-		if ((count < 5U) ||
-			(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
-			(DebugProtocol_ParseInt(tokens[3], &syncTolerance) == 0U) ||
-			(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
-			(syncLimit < 0) || (syncLimit > DRIVE_CONTROL_PWM_MAX))
-		{
-			DebugProtocol_SendErr("ENC", "ARG");
-		}
-		else
-		{
-			command.type = UGV_COMMAND_ENCODER_SYNC_PARAMS;
-			command.kp = kp;
-			command.first = syncTolerance;
-			command.second = syncLimit;
-			DebugProtocol_SubmitCommand(&command);
-		}
+		DebugProtocol_ProcessEncoderSyncCommand(&command, tokens, count);
 		return;
 	}
 	DebugProtocol_SendErr("ENC", "ARG");
 }
 
-static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
+static uint8_t DebugProtocol_TrySubmitSimpleCommand(const char *name,
+												 UgvCommand *command)
 {
-	UgvCommand command =
+	uint8_t index;
+	uint8_t commandCount =
+		(uint8_t)(sizeof(g_simpleCommands) / sizeof(g_simpleCommands[0]));
+
+	for (index = 0U; index < commandCount; index++)
 	{
-		UGV_COMMAND_START,
-		{0},
-		0,
-		0,
-		0,
-		0.0f,
-		0.0f,
-		0U
-	};
+		if (DebugProtocol_StringEqual(name, g_simpleCommands[index].name) != 0U)
+		{
+			command->type = g_simpleCommands[index].type;
+			DebugProtocol_SubmitCommand(command);
+			return 1U;
+		}
+	}
+	return 0U;
+}
+
+static void DebugProtocol_ProcessModeCommand(UgvCommand *command,
+											 char *tokens[],
+											 uint8_t count)
+{
+	if (count < 2U)
+	{
+		DebugProtocol_SendErr("MODE", "ARG");
+		return;
+	}
+	if (DebugProtocol_StringEqual(tokens[1], "DIRECT") != 0U)
+	{
+		command->first = DRIVE_MODE_DIRECT;
+	}
+	else if (DebugProtocol_StringEqual(tokens[1], "STRAIGHT") != 0U)
+	{
+		command->first = DRIVE_MODE_STRAIGHT;
+	}
+	else
+	{
+		DebugProtocol_SendErr("MODE", "ARG");
+		return;
+	}
+
+	command->type = UGV_COMMAND_MODE;
+	DebugProtocol_SubmitCommand(command);
+}
+
+static void DebugProtocol_ProcessWheelPwmCommand(UgvCommand *command,
+												 char *tokens[],
+												 uint8_t count)
+{
 	int32_t left;
 	int32_t right;
-	int32_t ivalue;
+
+	if ((count < 3U) ||
+		(DebugProtocol_ParseInt(tokens[1], &left) == 0U) ||
+		(DebugProtocol_ParseInt(tokens[2], &right) == 0U) ||
+		(DebugProtocol_IsPwmValue(left) == 0U) ||
+		(DebugProtocol_IsPwmValue(right) == 0U))
+	{
+		DebugProtocol_SendErr(tokens[0], "ARG");
+		return;
+	}
+
+	command->type = UGV_COMMAND_WHEEL_PWM;
+	command->first = left;
+	command->second = right;
+	DebugProtocol_SubmitCommand(command);
+}
+
+static void DebugProtocol_ProcessSpeedCommand(UgvCommand *command,
+											  char *tokens[],
+											  uint8_t count)
+{
+	int32_t speed;
+
+	if ((count < 2U) || (DebugProtocol_ParseInt(tokens[1], &speed) == 0U) ||
+		(DebugProtocol_IsPwmValue(speed) == 0U))
+	{
+		DebugProtocol_SendErr("SPEED", "ARG");
+		return;
+	}
+
+	command->type = UGV_COMMAND_SPEED;
+	command->first = speed;
+	DebugProtocol_SubmitCommand(command);
+}
+
+static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
+{
+	UgvCommand command;
 
 	if (count == 0U)
 	{
 		return;
 	}
-	DebugProtocol_CopyCommandName(command.responseName,
-								  sizeof(command.responseName),
-								  tokens[0]);
+	DebugProtocol_InitCommand(&command, tokens[0]);
 
-	if (DebugProtocol_StringEqual(tokens[0], "START") != 0U)
+	/* 分支顺序从无参数命令到复合命令，与协议文档中的分类保持一致。 */
+	if (DebugProtocol_TrySubmitSimpleCommand(tokens[0], &command) != 0U)
 	{
-		command.type = UGV_COMMAND_START;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "STOP") != 0U)
-	{
-		command.type = UGV_COMMAND_STOP;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "RESET") != 0U)
-	{
-		command.type = UGV_COMMAND_RESET;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if (DebugProtocol_StringEqual(tokens[0], "DEFAULTS") != 0U)
-	{
-		command.type = UGV_COMMAND_DEFAULTS;
-		DebugProtocol_SubmitCommand(&command);
 		return;
 	}
 	if ((DebugProtocol_StringEqual(tokens[0], "GET") != 0U) &&
@@ -526,61 +628,18 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "MODE") != 0U)
 	{
-		if (count < 2U)
-		{
-			DebugProtocol_SendErr("MODE", "ARG");
-		}
-		else if (DebugProtocol_StringEqual(tokens[1], "DIRECT") != 0U)
-		{
-			command.type = UGV_COMMAND_MODE;
-			command.first = DRIVE_MODE_DIRECT;
-			DebugProtocol_SubmitCommand(&command);
-		}
-		else if (DebugProtocol_StringEqual(tokens[1], "STRAIGHT") != 0U)
-		{
-			command.type = UGV_COMMAND_MODE;
-			command.first = DRIVE_MODE_STRAIGHT;
-			DebugProtocol_SubmitCommand(&command);
-		}
-		else
-		{
-			DebugProtocol_SendErr("MODE", "ARG");
-		}
+		DebugProtocol_ProcessModeCommand(&command, tokens, count);
 		return;
 	}
 	if ((DebugProtocol_StringEqual(tokens[0], "PWM") != 0U) ||
 		(DebugProtocol_StringEqual(tokens[0], "MOVE") != 0U))
 	{
-		if ((count < 3U) ||
-			(DebugProtocol_ParseInt(tokens[1], &left) == 0U) ||
-			(DebugProtocol_ParseInt(tokens[2], &right) == 0U) ||
-			(left < -DRIVE_CONTROL_PWM_MAX) || (left > DRIVE_CONTROL_PWM_MAX) ||
-			(right < -DRIVE_CONTROL_PWM_MAX) || (right > DRIVE_CONTROL_PWM_MAX))
-		{
-			DebugProtocol_SendErr(tokens[0], "ARG");
-		}
-		else
-		{
-			command.type = UGV_COMMAND_WHEEL_PWM;
-			command.first = left;
-			command.second = right;
-			DebugProtocol_SubmitCommand(&command);
-		}
+		DebugProtocol_ProcessWheelPwmCommand(&command, tokens, count);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "SPEED") != 0U)
 	{
-		if ((count < 2U) || (DebugProtocol_ParseInt(tokens[1], &ivalue) == 0U) ||
-			(ivalue < -DRIVE_CONTROL_PWM_MAX) || (ivalue > DRIVE_CONTROL_PWM_MAX))
-		{
-			DebugProtocol_SendErr("SPEED", "ARG");
-		}
-		else
-		{
-			command.type = UGV_COMMAND_SPEED;
-			command.first = ivalue;
-			DebugProtocol_SubmitCommand(&command);
-		}
+		DebugProtocol_ProcessSpeedCommand(&command, tokens, count);
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[0], "ENC") != 0U)

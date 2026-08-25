@@ -23,8 +23,19 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(fields["F"], "4")
         self.assertEqual(fields["BV"], "11820")
 
+    def test_parse_frame_accepts_spaces_and_normalizes_keys(self):
+        prefix, fields = parse_frame(" state  r=1, mode=straight ")
+        self.assertEqual(prefix, "STATE")
+        self.assertEqual(fields, {"R": "1", "MODE": "straight"})
+
+    def test_parse_empty_and_prefix_only_frames(self):
+        self.assertEqual(parse_frame("  "), ("", {}))
+        self.assertEqual(parse_frame("STOP"), ("STOP", {}))
+
     def test_parse_ack(self):
         self.assertEqual(parse_ack("ERR C=START,M=FAULT"), (False, "START", "FAULT"))
+        self.assertEqual(parse_ack("ok c=stop"), (True, "STOP", ""))
+        self.assertIsNone(parse_ack("T C=START"))
 
     def test_parse_int_field_fail_closed(self):
         fields = {"F": "0x04", "BV": "bad"}
