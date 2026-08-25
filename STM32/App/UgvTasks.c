@@ -1,7 +1,7 @@
 /*
  * FreeRTOS 任务编排层。
  *
- * 这里把整车运行拆成四条固定职责：控制任务处理命令/安全/电机，
+ * 这里把整车运行拆成四条固定职责：控制任务处理命令和电机，
  * 协议任务只读串口 RX，遥测任务只发快照，串口任务只写 TX。
  * 这种分工让“谁可以改车状态”非常明确，读代码时先从 ControlTask 看起。
  */
@@ -10,7 +10,6 @@
 #include "DriveControl.h"
 #include "FreeRTOS.h"
 #include "ProtocolTx.h"
-#include "Safety.h"
 #include "SystemTick.h"
 #include "UgvCommandQueue.h"
 #include "task.h"
@@ -40,8 +39,8 @@ static StackType_t g_protocolTaskStack[UGV_PROTOCOL_STACK_WORDS];
 static StackType_t g_telemetryTaskStack[UGV_TELEMETRY_STACK_WORDS];
 static StackType_t g_serialTaskStack[UGV_SERIAL_STACK_WORDS];
 
-/* ControlTask 是 DriveControl/Safety 的唯一写入者，避免多任务并发改车状态。 */
-static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
+/* ControlTask 是 DriveControl 的唯一写入者，避免多任务并发改车状态。 */
+static void UgvTasks_HandleCommand(const UgvCommand *command)
 {
 	if (command == 0)
 	{
@@ -50,15 +49,8 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 	switch (command->type)
 	{
 	case UGV_COMMAND_START:
-		if (Safety_RequestStart(nowMs) != 0U)
-		{
-			DriveControl_Start();
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "FAULT");
-		}
+		DriveControl_Start();
+		DebugProtocol_SendOk(command->responseName);
 		break;
 
 	case UGV_COMMAND_STOP:
@@ -76,25 +68,9 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 		DebugProtocol_SendOk(command->responseName);
 		break;
 
-	case UGV_COMMAND_PING:
-		Safety_KickCommunication(nowMs);
-		DebugProtocol_SendOk(command->responseName);
-		break;
-
 	case UGV_COMMAND_GET_ALL:
 		/* GET ALL 不进入 DriveControl，只要求协议层回发当前运行快照和配置。 */
 		DebugProtocol_SendState();
-		break;
-
-	case UGV_COMMAND_FAULT_CLEAR:
-		if (Safety_ClearFaults(nowMs) != 0U)
-		{
-			DebugProtocol_SendOk(command->responseName);
-		}
-		else
-		{
-			DebugProtocol_SendErr(command->responseName, "ACTIVE");
-		}
 		break;
 
 	case UGV_COMMAND_MODE:
@@ -112,8 +88,6 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 		if (DriveControl_SetWheelPwm((int16_t)command->first,
 									 (int16_t)command->second) != 0U)
 		{
-			/* PWM/MOVE/SPEED 都算有效通信，用来喂运行期通信看门狗。 */
-			Safety_KickCommunication(nowMs);
 			DebugProtocol_SendOk(command->responseName);
 		}
 		else
@@ -125,7 +99,6 @@ static void UgvTasks_HandleCommand(const UgvCommand *command, uint32_t nowMs)
 	case UGV_COMMAND_SPEED:
 		if (DriveControl_SetSpeed((int16_t)command->first) != 0U)
 		{
-			Safety_KickCommunication(nowMs);
 			DebugProtocol_SendOk(command->responseName);
 		}
 		else
@@ -214,14 +187,13 @@ static void UgvTasks_ControlTask(void *argument)
 		uint32_t nowMs = SystemTick_Millis();
 		uint32_t elapsedMs = nowMs - lastControlMs;
 
-		/* 每个 10ms 周期先清空待处理命令，再更新安全链和电机输出。 */
+		/* 每个 10ms 周期先清空待处理命令，再更新电机输出。 */
 		while (UgvCommandQueue_Receive(&command, 0U) != 0U)
 		{
-			UgvTasks_HandleCommand(&command, nowMs);
+			UgvTasks_HandleCommand(&command);
 			nowMs = SystemTick_Millis();
 		}
 
-		Safety_Update(nowMs);
 		if (elapsedMs > 100U)
 		{
 			/* 调试暂停或异常卡顿后限制 dt，防止 PI 积分一次性跳太大。 */
@@ -281,7 +253,7 @@ uint8_t UgvTasks_Start(void)
 	TaskHandle_t telemetryTask;
 	TaskHandle_t serialTask;
 
-	/* 任务全部静态创建；任一创建失败都让 main 停在安全失败路径。 */
+	/* 任务全部静态创建；任一创建失败都让 main 停在创建失败路径。 */
 	serialTask = xTaskCreateStatic(UgvTasks_SerialTask, "serial_tx",
 								   UGV_SERIAL_STACK_WORDS, 0,
 								   UGV_SERIAL_PRIORITY, g_serialTaskStack,

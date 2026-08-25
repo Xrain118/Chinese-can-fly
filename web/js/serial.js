@@ -58,25 +58,6 @@
             }
         }
 
-        function stopHeartbeat() {
-            if (heartbeatTimer !== null) {
-                window.clearInterval(heartbeatTimer);
-                heartbeatTimer = null;
-            }
-        }
-
-        function startHeartbeat() {
-            if (heartbeatTimer !== null) return;
-            heartbeatTimer = window.setInterval(() => {
-                if (!serialPort || !serialPort.writable || !keepReading) {
-                    stopHeartbeat();
-                    return;
-                }
-                /* 心跳只喂 STM32 通信看门狗，不进入命令 toast，避免运行时刷屏。 */
-                sendCommand("PING", false, { silent: true });
-            }, HEARTBEAT_INTERVAL_MS);
-        }
-
         function autoReconnectEnabled() {
             return elements.autoReconnect.checked;
         }
@@ -138,7 +119,6 @@
             if (!wasCurrentPort && preferredPort !== port) return;
 
             /* 断链时清掉所有 pending 命令，避免旧 ACK 在重连后错误结算新事务。 */
-            stopHeartbeat();
             keepReading = false;
             receiveBuffer = "";
             if (wasCurrentPort) serialPort = null;
@@ -279,7 +259,6 @@
         async function disconnectSerial() {
             /* 手动断开会关闭自动重连，这是用户明确要求暂停追设备。 */
             manualDisconnect = true;
-            stopHeartbeat();
             elements.autoReconnect.checked = false;
             writeStoredSetting(AUTO_RECONNECT_STORAGE_KEY, "0");
             reconnectAttempt = 0;

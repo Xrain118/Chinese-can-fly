@@ -10,7 +10,6 @@
 #include "Serial.h"
 #include "DriveControl.h"
 #include "DebugProtocol.h"
-#include "Safety.h"
 #include "UgvTasks.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -22,7 +21,6 @@ int main(void)
 	SystemTick_Init();
 	DriveControl_Init();
 	Serial_Init();
-	Safety_Init(SystemTick_Millis());
 	DebugProtocol_Init();
 	UgvTasks_Init();
 	if (UgvTasks_Start() != 0U)

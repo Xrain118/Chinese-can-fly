@@ -261,7 +261,6 @@
             elements.baudRate.disabled = connected;
             setVehicleCommandControlsDisabled(!connected || configApplyRunning);
             if (!connected) {
-                if (typeof stopHeartbeat === "function") stopHeartbeat();
                 deviceConfigurationSynchronized = false;
                 if (typeof markDeviceConfigurationDisconnected === "function") markDeviceConfigurationDisconnected();
             }
@@ -280,14 +279,10 @@
         }
 
         function setRunState(running) {
-            /* RUN 状态来自车端回读；只有车端确认运行后页面才开始发心跳。 */
+            /* RUN 状态来自车端回读。 */
             const isRunning = Number(running) === 1 || String(running).toUpperCase() === "RUN";
             elements.runState.textContent = isRunning ? "RUN" : "STOP";
             elements.runState.classList.toggle("running", isRunning);
-            if (typeof startHeartbeat === "function" && typeof stopHeartbeat === "function") {
-                if (isRunning) startHeartbeat();
-                else stopHeartbeat();
-            }
         }
 
         function renderControlStrategy() {

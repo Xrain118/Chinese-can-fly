@@ -27,7 +27,7 @@
 | --- | --- |
 | `T k=v,...` / `TEL` | 周期遥测，9600 baud 下约 2.5 Hz。`VLF/VLR/VRF/VRR` 为四轮 CPS，`EL/ER` 为左右侧平均 CPS，`TL/TR` 为目标 CPS，`ED/ESC/ESA` 为同步误差/修正/活动状态 |
 | `S k=v,...` / `STATE` | GET ALL 的运行快照响应，字段与 `T` 基本一致 |
-| `CFG k=v,...` / `CONFIG` | GET ALL 的配置响应，包含 `EC/EKP/EKI/EFS/ECL/ESE/ESKP/EST/ESL/WDT/BLV` |
+| `CFG k=v,...` / `CONFIG` | GET ALL 的配置响应，包含 `EC/EKP/EKI/EFS/ECL/ESE/ESKP/EST/ESL` |
 | `OK C=<CMD>` | 命令确认回执 |
 | `ERR C=<CMD>` | 命令拒绝回执 |
 
@@ -42,7 +42,6 @@ PWM left right        MOVE left right  SPEED n
 ENC ON | OFF          ENC PID kp ki    ENC CPS n    ENC LIMIT n
 ENC SYNC ON | OFF     ENC SYNC kp toleranceCps limitPwm
 GET ALL               RESET            DEFAULTS
-PING                  HEARTBEAT        FAULT CLEAR
 ```
 
 默认基线：SPEED 0、ENC OFF、ENC PID 0.02/0、CPS 5000、ENC LIMIT 100、SYNC OFF、同步 P 0.01、容差 50 CPS、限幅 50 PWM。

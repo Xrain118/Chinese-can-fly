@@ -12,7 +12,6 @@
         let readLoopPromise = null;
         let connectAttemptPromise = null;
         let reconnectTimer = null;
-        let heartbeatTimer = null;
         let reconnectAttempt = 0;
         let keepReading = false;
         let isDisconnecting = false;
@@ -42,7 +41,6 @@
         const MAX_RECEIVE_BUFFER = 8192;
         const MAX_COMMAND_TOASTS = 4;
         const COMMAND_TIMEOUT_MS = 5000;
-        const HEARTBEAT_INTERVAL_MS = 200;
         const RECONNECT_DELAYS_MS = [400, 800, 1500, 2500, 4000];
         const AUTO_RECONNECT_STORAGE_KEY = "ugvDebugger.autoReconnect";
         const BAUD_RATE_STORAGE_KEY = "ugvDebugger.baudRate.f407";
@@ -58,7 +56,7 @@
         };
         const textEncoder = new TextEncoder();
         const textDecoder = new TextDecoder("utf-8");
-        /* 等待 OK/ERR 的命令事务；PING/HEARTBEAT 走静默路径，不进入这里刷屏。 */
+        /* 等待 OK/ERR 的命令事务。 */
         const pendingCommands = [];
 
         /*

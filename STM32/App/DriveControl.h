@@ -49,7 +49,7 @@ void DriveControl_Init(void);
 void DriveControl_LoadDefaults(void);
 /* 清空积分、目标和输出，但不改变已保存的参数。 */
 void DriveControl_Reset(void);
-/* 进入运行态；真正输出仍受 Safety_Update 和 DriveControl_Update 约束。 */
+/* 进入运行态；真正输出在 DriveControl_Update 中更新。 */
 void DriveControl_Start(void);
 /* 退出运行态并立即清零 PWM。 */
 void DriveControl_Stop(void);

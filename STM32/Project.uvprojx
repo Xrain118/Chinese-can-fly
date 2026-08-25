@@ -505,16 +505,6 @@
               <FileType>5</FileType>
               <FilePath>.\Hardware\Serial.h</FilePath>
             </File>
-            <File>
-              <FileName>PowerMonitor.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\Hardware\PowerMonitor.c</FilePath>
-            </File>
-            <File>
-              <FileName>PowerMonitor.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Hardware\PowerMonitor.h</FilePath>
-            </File>
           </Files>
         </Group>
         <Group>
@@ -549,16 +539,6 @@
               <FileName>DebugProtocol.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\App\DebugProtocol.h</FilePath>
-            </File>
-            <File>
-              <FileName>Safety.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>.\App\Safety.c</FilePath>
-            </File>
-            <File>
-              <FileName>Safety.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\App\Safety.h</FilePath>
             </File>
             <File>
               <FileName>ProtocolTx.c</FileName>

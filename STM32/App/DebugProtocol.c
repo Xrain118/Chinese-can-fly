@@ -2,14 +2,12 @@
  * STM32 文本调试协议。
  *
  * 串口 RX 在这里组行、归一化、解析命令，再投递到 UgvCommandQueue；
- * 这里不直接改车状态，避免协议任务和控制任务同时写 DriveControl/Safety。
+ * 这里不直接改车状态，避免协议任务和控制任务同时写 DriveControl。
  * 下行的 OK/ERR/T/S/CFG/I 帧统一进入 ProtocolTx 队列，由串口发送任务串行输出。
  */
 #include "DebugProtocol.h"
 #include "DriveControl.h"
-#include "PowerMonitor.h"
 #include "ProtocolTx.h"
-#include "Safety.h"
 #include "Serial.h"
 #include "UgvCommandQueue.h"
 #include <stdarg.h>
@@ -277,19 +275,16 @@ void DebugProtocol_SendErr(const char *command, const char *message)
 static void DebugProtocol_SendDriveLine(const char *prefix)
 {
 	DriveControl_Snapshot snapshot;
-	Safety_Snapshot safety;
 	DebugProtocol_LineBuilder line;
 
 	DriveControl_GetSnapshot(&snapshot);
-	Safety_GetSnapshot(&safety);
 	DebugProtocol_LineInit(&line);
 	/* T/S 共享运行快照字段；配置参数放到独立 CFG 帧，方便前端区分同步完成点。 */
 	DebugProtocol_LineAppend(
 		&line,
 		"%s R=%d,M=%d,SP=%d,DL=%d,DR=%d,PL=%d,PR=%d,"
 		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,"
-		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d,"
-		"F=%lu,BV=%lu,ES=%d,WD=%lu\r\n",
+		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d\r\n",
 		(char *)prefix,
 		snapshot.running,
 		(int)snapshot.mode,
@@ -309,11 +304,7 @@ static void DebugProtocol_SendDriveLine(const char *prefix)
 		(long)snapshot.rightRearCps,
 		(long)snapshot.encoderSyncError,
 		snapshot.encoderSyncCorrection,
-		snapshot.encoderSyncActive,
-		(unsigned long)safety.faultFlags,
-		(unsigned long)safety.batteryMv,
-		safety.emergencyStopActive,
-		(unsigned long)safety.watchdogAgeMs);
+		snapshot.encoderSyncActive);
 	DebugProtocol_LineSend(&line);
 }
 
@@ -334,11 +325,9 @@ void DebugProtocol_SendState(void)
 							 DriveControl_GetEncoderLimit(),
 							 DriveControl_GetEncoderSyncEnabled());
 	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderSyncKp());
-	DebugProtocol_LineAppend(&line, ",EST=%ld,ESL=%d,WDT=%lu,BLV=%lu\r\n",
-							 (long)DriveControl_GetEncoderSyncToleranceCps(),
-							 DriveControl_GetEncoderSyncLimit(),
-							 (unsigned long)SAFETY_COMM_TIMEOUT_MS,
-							 (unsigned long)POWER_BATTERY_LOW_MV);
+	DebugProtocol_LineAppend(&line, ",EST=%ld,ESL=%d\r\n",
+								 (long)DriveControl_GetEncoderSyncToleranceCps(),
+								 DriveControl_GetEncoderSyncLimit());
 	DebugProtocol_LineSend(&line);
 }
 
@@ -525,23 +514,6 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 	if (DebugProtocol_StringEqual(tokens[0], "DEFAULTS") != 0U)
 	{
 		command.type = UGV_COMMAND_DEFAULTS;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if ((DebugProtocol_StringEqual(tokens[0], "HEARTBEAT") != 0U) ||
-		(DebugProtocol_StringEqual(tokens[0], "PING") != 0U))
-	{
-		command.type = UGV_COMMAND_PING;
-		DebugProtocol_SubmitCommand(&command);
-		return;
-	}
-	if ((DebugProtocol_StringEqual(tokens[0], "FAULT") != 0U) &&
-		(count >= 2U) && (DebugProtocol_StringEqual(tokens[1], "CLEAR") != 0U))
-	{
-		command.type = UGV_COMMAND_FAULT_CLEAR;
-		DebugProtocol_CopyCommandName(command.responseName,
-									  sizeof(command.responseName),
-									  "FAULT");
 		DebugProtocol_SubmitCommand(&command);
 		return;
 	}

@@ -116,13 +116,11 @@
             const firstSpace = line.indexOf(" ");
             const prefix = (firstSpace < 0 ? line : line.slice(0, firstSpace)).toUpperCase();
             const payload = firstSpace < 0 ? "" : line.slice(firstSpace + 1).trim();
-            /* OK/ERR 的 C 字段用于匹配 pendingCommands，心跳回执静默吞掉。 */
+            /* OK/ERR 的 C 字段用于匹配 pendingCommands。 */
             const responseValues = (prefix === "OK" || prefix === "ERR") ? parseKeyValues(payload) : {};
             const responseCommand = responseValues.CMD ?? responseValues.C;
-            const silentHeartbeatResponse =
-                ["PING", "HEARTBEAT"].includes(String(responseCommand ?? "").toUpperCase());
 
-            if (!silentHeartbeatResponse) appendLog("RX", line, "rx");
+            appendLog("RX", line, "rx");
 
             if (prefix === "T" || prefix === "TEL") {
                 const values = expandKeyAliases(parseKeyValues(payload), {
@@ -147,8 +145,7 @@
             if (prefix === "CFG" || prefix === "CONFIG") {
                 const values = expandKeyAliases(parseKeyValues(payload), {
                     EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT",
-                    ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT",
-                    WDT: "WATCHDOG_TIMEOUT_MS", BLV: "BATTERY_LOW_MV"
+                    ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
                 });
                 applyConfig(values);
                 publishPidChartValues("state", values);
@@ -157,7 +154,6 @@
                 return;
             }
             if (prefix === "OK") {
-                if (silentHeartbeatResponse) return;
                 if (!settlePendingCommand(true, line, responseCommand)) {
                     elements.response.className = "response ok";
                     elements.response.textContent = line;
@@ -165,7 +161,6 @@
                 return;
             }
             if (prefix === "ERR") {
-                if (silentHeartbeatResponse) return;
                 if (!settlePendingCommand(false, line, responseCommand)) {
                     elements.response.className = "response error";
                     elements.response.textContent = line;

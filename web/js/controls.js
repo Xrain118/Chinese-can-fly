@@ -61,10 +61,7 @@
             }
         });
         document.getElementById("startButton").addEventListener("click", () => sendCommand("START"));
-        document.getElementById("stopButton").addEventListener("click", () => {
-            if (typeof stopHeartbeat === "function") stopHeartbeat();
-            sendCommand("STOP");
-        });
+        document.getElementById("stopButton").addEventListener("click", () => sendCommand("STOP"));
         document.getElementById("getAllButton").addEventListener("click", () => sendCommand("GET ALL"));
         document.getElementById("resetButton").addEventListener("click", () => sendCommand("RESET"));
         document.getElementById("defaultsButton").addEventListener("click", () => sendConfigurationCommand("DEFAULTS"));

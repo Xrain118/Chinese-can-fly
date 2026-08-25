@@ -90,16 +90,6 @@
 #define BOARD_ENCODER_RR_AF          1U
 #define BOARD_ENCODER_RR_TIM         TIM1
 
-/* 安全输入和电池采样；PE12 是软件急停，不能替代物理断电急停。 */
-#define BOARD_ESTOP_PORT             GPIOE
-#define BOARD_ESTOP_PIN              12U
-#define BOARD_ESTOP_ACTIVE_LEVEL     0U
-
-#define BOARD_BATTERY_ADC            ADC1
-#define BOARD_BATTERY_ADC_PORT       GPIOC
-#define BOARD_BATTERY_ADC_PIN        0U
-#define BOARD_BATTERY_ADC_CHANNEL    10U
-
 /* 板载 U1T/U1R 引出的 USART1，供 HC-04 蓝牙透传文本协议使用。 */
 #define BOARD_BT_USART               USART1
 #define BOARD_BT_PORT                GPIOA
