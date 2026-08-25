@@ -74,10 +74,6 @@
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
-            if (values.SENS !== undefined) setSensorBits(values.SENS);
-            setTrackingRuntime(values);
-            if (values.ERR !== undefined) document.getElementById("errorValue").textContent = values.ERR;
-
             applyWheelAndSyncTelemetry(values);
 
             lastTelemetryAt = Date.now();
@@ -88,17 +84,12 @@
             if (values.RUN !== undefined) setRunState(values.RUN);
             if (values.DRIVE_MODE !== undefined) setDriveMode(values.DRIVE_MODE);
             /* S 帧只同步运行快照；配置同步以独立 CFG 帧为准。 */
-            setTrackingRuntime(values);
             if (values.ENCODER_CLOSED !== undefined) setEncoderLoopState(values.ENCODER_CLOSED);
             if (values.ENC_SYNC_ENABLED !== undefined) {
                 setEncoderSyncState(values.ENC_SYNC_ENABLED, values.ENC_SYNC_ACTIVE ?? encoderSyncActive);
             }
-            setInputValue("kpInput", values.KP);
-            setInputValue("kiInput", values.KI);
-            setInputValue("kdInput", values.KD);
             setInputValue("speedInput", values.SPEED);
             if (values.SPEED !== undefined) setBaseSpeed(values.SPEED, true);
-            setInputValue("limitInput", values.LIMIT);
             applyWheelAndSyncTelemetry(values);
         }
 
@@ -115,9 +106,6 @@
             setInputValue("encoderSyncKpInput", values.ENC_SYNC_KP);
             setInputValue("encoderSyncToleranceInput", values.ENC_SYNC_TOLERANCE);
             setInputValue("encoderSyncLimitInput", values.ENC_SYNC_LIMIT);
-            for (let channel = 1; channel <= 8; channel += 1) {
-                setInputValue("weight" + channel, values["W" + channel]);
-            }
             if (typeof markDeviceConfigurationSynchronized === "function") markDeviceConfigurationSynchronized();
         }
 
@@ -138,7 +126,7 @@
 
             if (prefix === "T" || prefix === "TEL") {
                 const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "RUN", M: "DRIVE_MODE", S: "SENS", E: "ERR", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
+                    R: "RUN", M: "DRIVE_MODE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R",
                     EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE"
                 });
                 applyTelemetry(values);
@@ -148,7 +136,7 @@
             if (prefix === "S" || prefix === "STATE") {
                 /* 状态帧更新运行快照；配置字段由 CFG 处理。 */
                 const values = expandKeyAliases(parseKeyValues(payload), {
-                    R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", NB: "TRACKING_BASE_PWM", NS: "TRACKING_STATE", EC: "ENCODER_CLOSED",
+                    R: "RUN", M: "DRIVE_MODE", SP: "SPEED", EC: "ENCODER_CLOSED",
                     PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE",
                     EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT"
                 });

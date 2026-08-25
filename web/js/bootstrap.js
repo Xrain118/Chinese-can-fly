@@ -17,13 +17,13 @@
         try {
             pidChartChannel = new BroadcastChannel(PID_CHART_CHANNEL_NAME);
             pidChartChannel.addEventListener("message", event => {
-                if (event.data?.type === "tracking-debugger:chart-ready") sendPidChartSnapshot();
+                if (event.data?.type === "ugv-debugger:chart-ready") sendPidChartSnapshot();
             });
         } catch (error) {
             pidChartChannel = null;
         }
         window.addEventListener("message", event => {
-            if (event.data?.type === "tracking-debugger:chart-ready") sendPidChartSnapshot(event.source);
+            if (event.data?.type === "ugv-debugger:chart-ready") sendPidChartSnapshot(event.source);
         });
 
         /* Web Serial 事件只在支持的桌面浏览器里存在；不支持时页面仍可离线看预设。 */
@@ -70,7 +70,6 @@
         }, 1000);
 
         /* 首屏默认值全部从同一套渲染函数走，避免 HTML 初始文案和 JS 状态分叉。 */
-        setSensorBits("00000000");
         setDriveMode(0);
         setEncoderLoopState(0);
         setEncoderSyncState(0, 0);

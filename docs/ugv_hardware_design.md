@@ -10,7 +10,6 @@ four-wheel differential unmanned ground vehicle.
   localization, path planning, and air-ground target exchange.
 - Two external TB6612 modules drive the four wheel motors. One module is
   assigned to the front axle, and one module is assigned to the rear axle.
-- Gray-scale tracking sensors and ESP32 are not used.
 
 ## STM32F407 Pin Allocation
 

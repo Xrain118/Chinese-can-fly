@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PID 实时图表 · 八路循迹调试台</title>
+    <title>PID 实时图表 · STM32 四驱调试台</title>
     <style>
         :root {
             --ink: #172536;
@@ -405,7 +405,6 @@
                     </div>
                     <div class="custom-help">固件新增的任意数字键会自动出现。也可先按“类别.键名”添加，例如 <strong>telemetry.BATTERY</strong>。</div>
                     <div class="preset-row" aria-label="PID 曲线预设">
-                        <button class="small secondary preset-button" type="button" data-preset="tracking">循迹 PID</button>
                         <button class="small secondary preset-button" type="button" data-preset="leftSpeed">左轮速度 PI</button>
                         <button class="small secondary preset-button" type="button" data-preset="rightSpeed">右轮速度 PI</button>
                         <button class="small secondary preset-button" type="button" data-preset="compare">左右对比</button>
@@ -425,14 +424,13 @@
     <script>
         "use strict";
 
-        const CHANNEL_NAME = "tracking-debugger-pid-chart-v1";
-        const STORAGE_KEY = "trackingDebugger.pidChart.settings.v1";
+        const CHANNEL_NAME = "ugv-debugger-pid-chart-v1";
+        const STORAGE_KEY = "ugvDebugger.pidChart.settings.v1";
         const MAX_HISTORY_MS = 120000;
         const MAX_SELECTED_FIELDS = 10;
         const COLOR_PALETTE = ["#0d9488", "#2563eb", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#475569", "#ea580c"];
 
         const FIELD_INFO = {
-            "telemetry.ERR": { label: "循迹位置误差", group: "循迹 PID", unit: "" },
             "telemetry.PWM_L": { label: "左轮 PWM", group: "电机与编码器", unit: "" },
             "telemetry.PWM_R": { label: "右轮 PWM", group: "电机与编码器", unit: "" },
             "telemetry.ENC_L": { label: "左轮实际速度", group: "电机与编码器", unit: "CPS" },
@@ -456,24 +454,10 @@
             "derived.TARGET_AVG": { label: "左右轮平均目标", group: "PID 派生量", unit: "CPS" },
             "derived.PWM_AVG": { label: "左右轮平均 PWM", group: "PID 派生量", unit: "" },
             "derived.PWM_DIFF": { label: "左右轮 PWM 差", group: "PID 派生量", unit: "" },
-            "telemetry.CH1": { label: "CH1（−70 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH2": { label: "CH2（−50 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH3": { label: "CH3（−30 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH4": { label: "CH4（−10 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH5": { label: "CH5（+10 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH6": { label: "CH6（+30 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH7": { label: "CH7（+50 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.CH8": { label: "CH8（+70 mm）", group: "八路循迹传感器", unit: "" },
-            "telemetry.TRACKING_BASE_PWM": { label: "动态基础 PWM", group: "循迹 PID", unit: "PWM" },
-            "telemetry.TRACKING_STATE": { label: "循迹状态", group: "运行状态", unit: "" },
             "telemetry.RUN": { label: "运行状态", group: "运行状态", unit: "" },
             "telemetry.DRIVE_MODE": { label: "驱动模式", group: "运行状态", unit: "" },
             "telemetry.ENCODER_CLOSED": { label: "编码器闭环状态", group: "运行状态", unit: "" },
-            "state.KP": { label: "循迹 Kp", group: "控制参数", unit: "" },
-            "state.KI": { label: "循迹 Ki", group: "控制参数", unit: "" },
-            "state.KD": { label: "循迹 Kd", group: "控制参数", unit: "" },
             "state.SPEED": { label: "基础速度指令", group: "控制参数", unit: "" },
-            "state.LIMIT": { label: "循迹输出限幅", group: "控制参数", unit: "" },
             "state.ENC_KP": { label: "编码器 Kp", group: "控制参数", unit: "" },
             "state.ENC_KI": { label: "编码器 Ki", group: "控制参数", unit: "" },
             "state.ENC_LIMIT": { label: "编码器输出限幅", group: "控制参数", unit: "" },
@@ -483,9 +467,8 @@
             "state.ENC_SYNC_LIMIT": { label: "同步修正限幅", group: "控制参数", unit: "PWM" }
         };
 
-        const GROUP_ORDER = ["循迹 PID", "电机与编码器", "四轮编码器", "同步控制", "PID 派生量", "控制参数", "八路循迹传感器", "运行状态", "遥测扩展", "状态扩展", "自定义"];
+        const GROUP_ORDER = ["电机与编码器", "四轮编码器", "同步控制", "PID 派生量", "控制参数", "运行状态", "遥测扩展", "状态扩展", "自定义"];
         const PRESETS = {
-            tracking: ["telemetry.ERR", "telemetry.PWM_L", "telemetry.PWM_R"],
             leftSpeed: ["telemetry.TARGET_L", "telemetry.ENC_L", "derived.ENC_ERROR_L", "telemetry.PWM_L"],
             rightSpeed: ["telemetry.TARGET_R", "telemetry.ENC_R", "derived.ENC_ERROR_R", "telemetry.PWM_R"],
             compare: ["telemetry.TARGET_L", "telemetry.TARGET_R", "telemetry.ENC_L", "telemetry.ENC_R"],
@@ -533,7 +516,7 @@
         }
 
         const savedSettings = loadSettings();
-        const defaultSelection = ["telemetry.ERR", "derived.ENC_ERROR_L", "derived.ENC_ERROR_R"];
+        const defaultSelection = ["telemetry.TARGET_L", "telemetry.ENC_L", "derived.ENC_ERROR_L"];
         const state = {
             values: new Map(),
             fields: new Map(Object.entries(FIELD_INFO)),
@@ -786,22 +769,22 @@
 
         function handleDebuggerMessage(message) {
             if (!message || typeof message !== "object") return;
-            if (message.type === "tracking-debugger:data") {
+            if (message.type === "ugv-debugger:data") {
                 if (!state.demo) registerValues(message.values, message.timestamp, message.source);
                 return;
             }
-            if (message.type === "tracking-debugger:snapshot") {
+            if (message.type === "ugv-debugger:snapshot") {
                 if (!state.demo) registerValues(message.values, message.timestamp, "snapshot");
                 if (message.connection) state.connection = message.connection;
                 return;
             }
-            if (message.type === "tracking-debugger:connection" && message.connection) {
+            if (message.type === "ugv-debugger:connection" && message.connection) {
                 state.connection = message.connection;
             }
         }
 
         function sendReadySignal() {
-            const message = { type: "tracking-debugger:chart-ready", timestamp: Date.now() };
+            const message = { type: "ugv-debugger:chart-ready", timestamp: Date.now() };
             if (window.opener && !window.opener.closed) {
                 try { window.opener.postMessage(message, "*"); } catch (error) { /* 继续尝试广播通道。 */ }
             }
@@ -861,7 +844,6 @@
             const rightRear = right - Math.cos(elapsed * 6.4) * 6;
             const syncError = (targetLeft - targetRight) - (left - right);
             const values = {
-                "telemetry.ERR": Math.sin(elapsed * 1.8) * 520 + Math.sin(elapsed * 5.3) * 65,
                 "telemetry.TARGET_L": targetLeft,
                 "telemetry.TARGET_R": targetRight,
                 "telemetry.ENC_L": left,
@@ -883,10 +865,7 @@
                 "derived.ENC_DIFF_LEFT_WHEELS": leftFront - leftRear,
                 "derived.ENC_DIFF_RIGHT_WHEELS": rightFront - rightRear,
                 "derived.TARGET_AVG": (targetLeft + targetRight) / 2,
-                "derived.PWM_DIFF": (targetLeft - left) * 1.5 - (targetRight - right) * 1.5,
-                "state.KP": 0.42,
-                "state.KI": 0.08,
-                "state.KD": 0.12
+                "derived.PWM_DIFF": (targetLeft - left) * 1.5 - (targetRight - right) * 1.5
             };
             registerValues(values, now, "demo");
         }

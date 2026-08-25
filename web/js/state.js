@@ -44,17 +44,16 @@
         const COMMAND_TIMEOUT_MS = 5000;
         const HEARTBEAT_INTERVAL_MS = 200;
         const RECONNECT_DELAYS_MS = [400, 800, 1500, 2500, 4000];
-        const AUTO_RECONNECT_STORAGE_KEY = "trackingDebugger.autoReconnect";
-        const BAUD_RATE_STORAGE_KEY = "trackingDebugger.baudRate.f407";
-        const CONSOLE_PAGE_STORAGE_KEY = "trackingDebugger.consolePage";
-        /* 全新 STM32 版本地存储 key，避免读到旧 MSPM0 页面保存的预设。 */
-        const CONFIG_STORAGE_KEY = "stm32TrackingDebugger.configuration.v1";
-        const CONFIG_FORMAT = "stm32-tracking-debugger-config";
-        const CONFIG_VERSION = 3;
-        const PID_CHART_CHANNEL_NAME = "tracking-debugger-pid-chart-v1";
+        const AUTO_RECONNECT_STORAGE_KEY = "ugvDebugger.autoReconnect";
+        const BAUD_RATE_STORAGE_KEY = "ugvDebugger.baudRate.f407";
+        const CONSOLE_PAGE_STORAGE_KEY = "ugvDebugger.consolePage";
+        const CONFIG_STORAGE_KEY = "stm32UgvDebugger.configuration.v1";
+        const CONFIG_FORMAT = "stm32-ugv-debugger-config";
+        const CONFIG_VERSION = 4;
+        const PID_CHART_CHANNEL_NAME = "ugv-debugger-pid-chart-v1";
         /* 短字段与页面/图表使用的语义名称在此保持唯一映射，模式值 M 不再压缩为布尔量。 */
         const PID_CHART_ALIAS_KEYS = {
-            telemetry: { R: "RUN", M: "DRIVE_MODE", S: "SENS", E: "ERR", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
+            telemetry: { R: "RUN", M: "DRIVE_MODE", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", EC: "ENCODER_CLOSED", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE" },
             state: { R: "RUN", M: "DRIVE_MODE", SP: "SPEED", L: "LIMIT", PL: "PWM_L", PR: "PWM_R", EL: "ENC_L", ER: "ENC_R", TL: "TARGET_L", TR: "TARGET_R", VLF: "ENC_LF", VLR: "ENC_LR", VRF: "ENC_RF", VRR: "ENC_RR", ED: "ENC_SYNC_DIFF", ESC: "ENC_SYNC_PWM", ESA: "ENC_SYNC_ACTIVE", EC: "ENCODER_CLOSED", EKP: "ENC_KP", EKI: "ENC_KI", EFS: "ENC_FULL_SCALE", ECL: "ENC_LIMIT", ESE: "ENC_SYNC_ENABLED", ESKP: "ENC_SYNC_KP", EST: "ENC_SYNC_TOLERANCE", ESL: "ENC_SYNC_LIMIT" }
         };
         const textEncoder = new TextEncoder();
@@ -101,7 +100,7 @@
             runState: document.getElementById("runState"),
             driveModeText: document.getElementById("driveModeText"),
             modeDescription: document.getElementById("modeDescription"),
-            trackingModeButton: document.getElementById("trackingModeButton"),
+            directModeButton: document.getElementById("directModeButton"),
             straightModeButton: document.getElementById("straightModeButton"),
             encoderLoopState: document.getElementById("encoderLoopState"),
             encoderOnButton: document.getElementById("encoderOnButton"),
@@ -114,9 +113,6 @@
             chainExecutionValue: document.getElementById("chainExecutionValue"),
             chainActualValue: document.getElementById("chainActualValue"),
             chainPwmValue: document.getElementById("chainPwmValue"),
-            trackingPidScope: document.getElementById("trackingPidScope"),
-            trackingWeightsScope: document.getElementById("trackingWeightsScope"),
-            trackingRuntimeState: document.getElementById("trackingRuntimeState"),
             encoderParameterScope: document.getElementById("encoderParameterScope"),
             encoderSyncScope: document.getElementById("encoderSyncScope"),
             encoderSyncOnButton: document.getElementById("encoderSyncOnButton"),

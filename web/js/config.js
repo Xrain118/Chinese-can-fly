@@ -10,13 +10,10 @@
         const PRESET_FIELD_IDS = [
             "presetNameInput", "presetBaudRateSelect", "presetAutoReconnectSelect",
             "presetDriveModeSelect", "presetSpeedInput",
-            "presetKpInput", "presetKiInput", "presetKdInput", "presetLimitInput",
             "presetEncoderEnabledSelect", "presetEncoderKpInput", "presetEncoderKiInput",
             "presetEncoderFullScaleInput", "presetEncoderLimitInput",
             "presetEncoderSyncEnabledSelect", "presetEncoderSyncKpInput",
-            "presetEncoderSyncToleranceInput", "presetEncoderSyncLimitInput",
-            "presetWeight1", "presetWeight2", "presetWeight3", "presetWeight4",
-            "presetWeight5", "presetWeight6", "presetWeight7", "presetWeight8"
+            "presetEncoderSyncToleranceInput", "presetEncoderSyncLimitInput"
         ];
         let presetAutosaveTimer = null;
         let presetFormSyncing = false;
@@ -64,47 +61,27 @@
         /**
          * 校验并规范化导入、本地存储或页面收集到的整套配置。
          * 返回对象始终是当前版本；校验失败会抛错，调用方不会部分覆盖当前预设。
-         * v1 预设没有同步环字段，读取时补入关闭状态和保守默认参数；
-         * v1/v2 中已经停用的旧字段会被忽略。
+         * 当前格式只保存运动、编码器和连接参数，旧版预设不再兼容。
          */
         function validateConfiguration(rawConfiguration) {
             const raw = configObject(rawConfiguration, "配置文件");
             if (raw.format !== CONFIG_FORMAT) throw new Error("不是本调试台支持的配置文件");
             const sourceVersion = Number(raw.version);
-            if (![1, 2, CONFIG_VERSION].includes(sourceVersion)) {
-                throw new Error(`不支持配置版本 ${raw.version ?? "未知"}，当前支持 v1 / v2 / v${CONFIG_VERSION}`);
-            }
+            if (sourceVersion !== CONFIG_VERSION) throw new Error(`不支持配置版本 ${raw.version ?? "未知"}`);
 
             const interfaceConfig = configObject(raw.interface, "interface");
             const drive = configObject(raw.drive, "drive");
-            const tracking = configObject(raw.tracking, "tracking");
             const encoder = configObject(raw.encoder, "encoder");
-            const encoderSync = sourceVersion === 1 && encoder.sync === undefined
-                ? { enabled: false, kp: 0.01, toleranceCps: 50, correctionLimit: 50 }
-                : configObject(encoder.sync, "encoder.sync");
+            const encoderSync = configObject(encoder.sync, "encoder.sync");
             const name = String(raw.name ?? "未命名配置").trim() || "未命名配置";
             if (name.length > 80) throw new Error("配置名称不能超过 80 个字符");
-
-            if (!Array.isArray(tracking.weights) || tracking.weights.length !== 8) {
-                throw new Error("tracking.weights 必须正好包含 8 个权重");
-            }
-            const weights = tracking.weights.map((value, index) =>
-                configNumber(value, `tracking.weights[${index}]`, -10000, 10000, true)
-            );
-            for (let index = 1; index < weights.length; index += 1) {
-                if (weights[index] <= weights[index - 1]) {
-                    throw new Error("循迹权重必须从 CH1 到 CH8 严格递增");
-                }
-            }
 
             const baudRate = configNumber(interfaceConfig.baudRate, "interface.baudRate", 9600, 9600, true);
             if (!CONFIG_BAUD_RATES.includes(baudRate)) {
                 throw new Error("interface.baudRate 不是页面支持的波特率");
             }
             const rawDriveMode = String(drive.mode ?? "").toLowerCase();
-            const driveMode = rawDriveMode === "angle" && sourceVersion < CONFIG_VERSION
-                ? "track"
-                : configEnum(rawDriveMode, "drive.mode", ["track", "straight"]);
+            const driveMode = configEnum(rawDriveMode, "drive.mode", ["direct", "straight"]);
 
             return {
                 format: CONFIG_FORMAT,
@@ -118,13 +95,6 @@
                 drive: {
                     mode: driveMode,
                     speed: configNumber(drive.speed, "drive.speed", 0, 1000, true)
-                },
-                tracking: {
-                    kp: configNumber(tracking.kp, "tracking.kp", 0, 2),
-                    ki: configNumber(tracking.ki, "tracking.ki", 0, 2),
-                    kd: configNumber(tracking.kd, "tracking.kd", 0, 1),
-                    correctionLimit: configNumber(tracking.correctionLimit, "tracking.correctionLimit", 0, 500, true),
-                    weights
                 },
                 encoder: {
                     enabled: configBoolean(encoder.enabled, "encoder.enabled"),
@@ -158,15 +128,8 @@
                 },
                 drive: {
                     /* 模式以最近一次 S/T 帧回读为准，未连接时取当前界面选择。 */
-                    mode: currentDriveMode === 1 ? "straight" : "track",
+                    mode: currentDriveMode === 1 ? "straight" : "direct",
                     speed: controlValue("speedInput")
-                },
-                tracking: {
-                    kp: controlValue("kpInput"),
-                    ki: controlValue("kiInput"),
-                    kd: controlValue("kdInput"),
-                    correctionLimit: controlValue("limitInput"),
-                    weights: Array.from({ length: 8 }, (_, index) => controlValue("weight" + (index + 1)))
                 },
                 encoder: {
                     enabled: encoderLoopEnabled,
@@ -198,13 +161,6 @@
                     mode: controlValue("presetDriveModeSelect"),
                     speed: controlValue("presetSpeedInput")
                 },
-                tracking: {
-                    kp: controlValue("presetKpInput"),
-                    ki: controlValue("presetKiInput"),
-                    kd: controlValue("presetKdInput"),
-                    correctionLimit: controlValue("presetLimitInput"),
-                    weights: Array.from({ length: 8 }, (_, index) => controlValue("presetWeight" + (index + 1)))
-                },
                 encoder: {
                     enabled: controlValue("presetEncoderEnabledSelect"),
                     kp: controlValue("presetEncoderKpInput"),
@@ -234,10 +190,6 @@
                 setControlValue("presetAutoReconnectSelect", config.interface.autoReconnect ? "on" : "off");
                 setControlValue("presetDriveModeSelect", config.drive.mode);
                 setControlValue("presetSpeedInput", config.drive.speed);
-                setControlValue("presetKpInput", config.tracking.kp);
-                setControlValue("presetKiInput", config.tracking.ki);
-                setControlValue("presetKdInput", config.tracking.kd);
-                setControlValue("presetLimitInput", config.tracking.correctionLimit);
                 setControlValue("presetEncoderEnabledSelect", config.encoder.enabled ? "on" : "off");
                 setControlValue("presetEncoderKpInput", config.encoder.kp);
                 setControlValue("presetEncoderKiInput", config.encoder.ki);
@@ -247,7 +199,6 @@
                 setControlValue("presetEncoderSyncKpInput", config.encoder.sync.kp);
                 setControlValue("presetEncoderSyncToleranceInput", config.encoder.sync.toleranceCps);
                 setControlValue("presetEncoderSyncLimitInput", config.encoder.sync.correctionLimit);
-                config.tracking.weights.forEach((weight, index) => setControlValue("presetWeight" + (index + 1), weight));
             } finally {
                 presetFormSyncing = false;
             }

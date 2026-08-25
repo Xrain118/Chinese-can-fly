@@ -28,26 +28,6 @@
             return number;
         }
 
-        function readAndValidateWeights() {
-            /* 权重控件保留给旧页面兼容；即使固件未接入，也保持原有输入校验。 */
-            const weights = [];
-            for (let channel = 1; channel <= 8; channel += 1) {
-                const value = rangedInput("weight" + channel, -10000, 10000, true);
-                if (value === null) return null;
-                if (channel > 1 && value <= weights[channel - 2]) {
-                    appendLog("ERR", `权重必须从 CH1 到 CH8 严格递增：CH${channel} 必须大于 CH${channel - 1}`, "err");
-                    document.getElementById("weight" + channel).focus();
-                    return null;
-                }
-                weights.push(value);
-            }
-            return weights;
-        }
-
-        function reportUnsupportedCommand(name) {
-            appendLog("ERR", `${name} 当前 F407 固件未接入，未发送命令`, "err");
-        }
-
         elements.consoleTabs.forEach((tab, index) => {
             /* 页签支持键盘左右切换，保持调参现场不一定要用鼠标。 */
             tab.addEventListener("click", () => showConsolePage(tab.dataset.page));
@@ -88,27 +68,14 @@
         document.getElementById("getAllButton").addEventListener("click", () => sendCommand("GET ALL"));
         document.getElementById("resetButton").addEventListener("click", () => sendCommand("RESET"));
         document.getElementById("defaultsButton").addEventListener("click", () => sendConfigurationCommand("DEFAULTS"));
-        /* 当前 F407 固件只保留 DIRECT/STRAIGHT；旧循迹按钮映射为直接 PWM 模式。 */
-        elements.trackingModeButton.addEventListener("click", () => sendConfigurationCommand("MODE DIRECT"));
+        elements.directModeButton.addEventListener("click", () => sendConfigurationCommand("MODE DIRECT"));
         elements.straightModeButton.addEventListener("click", () => sendConfigurationCommand("MODE STRAIGHT"));
-
-        document.getElementById("sendPidButton").addEventListener("click", () => {
-            const kp = rangedInput("kpInput", 0, 2);
-            const ki = rangedInput("kiInput", 0, 2);
-            const kd = rangedInput("kdInput", 0, 1);
-            if (kp !== null && ki !== null && kd !== null) reportUnsupportedCommand("循迹 PID");
-        });
 
         document.getElementById("sendSpeedButton").addEventListener("click", () => {
             const speed = rangedInput("speedInput", 0, 1000, true);
             if (speed !== null) sendConfigurationCommand("SPEED " + speed);
         });
         document.getElementById("speedInput").addEventListener("input", event => setBaseSpeed(event.target.value));
-
-        document.getElementById("sendLimitButton").addEventListener("click", () => {
-            const limit = rangedInput("limitInput", 0, 500, true);
-            if (limit !== null) sendConfigurationCommand("LIMIT " + limit);
-        });
 
         document.getElementById("encoderOnButton").addEventListener("click", () => sendConfigurationCommand("ENC ON"));
         document.getElementById("encoderOffButton").addEventListener("click", () => sendConfigurationCommand("ENC OFF"));
@@ -138,19 +105,6 @@
             if (kp !== null && tolerance !== null && limit !== null) {
                 sendConfigurationCommand(`ENC SYNC ${kp} ${tolerance} ${limit}`);
             }
-        });
-
-        document.querySelectorAll(".send-weight").forEach(button => {
-            button.addEventListener("click", () => {
-                const channel = Number(button.dataset.channel);
-                const weights = readAndValidateWeights();
-                if (weights !== null) reportUnsupportedCommand(`WEIGHT CH${channel}`);
-            });
-        });
-
-        document.getElementById("sendAllWeightsButton").addEventListener("click", () => {
-            const weights = readAndValidateWeights();
-            if (weights !== null) reportUnsupportedCommand("WEIGHTS");
         });
 
         const manualCommand = document.getElementById("manualCommand");

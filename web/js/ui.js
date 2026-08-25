@@ -56,7 +56,7 @@
 
         function sendPidChartSnapshot(directTarget = null) {
             emitPidChartMessage({
-                type: "tracking-debugger:snapshot",
+                type: "ugv-debugger:snapshot",
                 timestamp: Date.now(),
                 values: { ...pidChartSnapshot },
                 connection: { ...pidChartConnectionState }
@@ -67,7 +67,7 @@
             const numericValues = {};
             Object.entries(values).forEach(([rawKey, rawValue]) => {
                 const key = String(rawKey).trim().toUpperCase();
-                if (!key || (source === "telemetry" && key === "SENS")) return;
+                if (!key) return;
                 /* 短字段已有长别名时不重复发一条曲线，避免图表里同一量出现两份。 */
                 const fullAlias = PID_CHART_ALIAS_KEYS[source]?.[key];
                 if (fullAlias && values[fullAlias] !== undefined) return;
@@ -84,13 +84,6 @@
             if (source === "telemetry") {
                 /* 派生曲线只用于观察调参，不回写页面或固件。 */
                 Object.assign(pidTelemetryState, numericValues);
-                if (values.SENS !== undefined) {
-                    const sensorBits = String(values.SENS).replace(/[^01]/g, "").padEnd(8, "0").slice(0, 8);
-                    for (let index = 0; index < 8; index += 1) {
-                        numericValues[`telemetry.CH${index + 1}`] = Number(sensorBits[index]);
-                    }
-                }
-
                 const derivedPair = (targetKey, leftKey, rightKey, operation) => {
                     const left = pidTelemetryState[leftKey];
                     const right = pidTelemetryState[rightKey];
@@ -110,7 +103,7 @@
 
             Object.assign(pidChartSnapshot, numericValues);
             emitPidChartMessage({
-                type: "tracking-debugger:data",
+                type: "ugv-debugger:data",
                 timestamp: Date.now(),
                 source,
                 values: numericValues
@@ -118,8 +111,8 @@
         }
 
         function openPidChartPage() {
-            const chartUrl = new URL("TrackingPidChart.html", window.location.href).href;
-            pidChartWindow = window.open(chartUrl, "trackingPidChart");
+            const chartUrl = new URL("PidChart.html", window.location.href).href;
+            pidChartWindow = window.open(chartUrl, "ugvPidChart");
             if (!pidChartWindow) {
                 elements.notice.textContent = "浏览器阻止了 PID 图表弹窗，请允许此页面打开新窗口。";
                 elements.notice.classList.add("show");
@@ -250,10 +243,9 @@
         function setVehicleCommandControlsDisabled(disabled) {
             const baseDisabled = Boolean(disabled);
             document.querySelectorAll(
-                "#startButton, #stopButton, #getAllButton, #resetButton, #defaultsButton, #trackingModeButton, #straightModeButton, " +
-                "#sendPidButton, #sendSpeedButton, #sendLimitButton, #encoderOnButton, #encoderOffButton, " +
-                "#sendEncoderPidButton, #sendEncoderCpsButton, #sendEncoderLimitButton, #encoderSyncOnButton, #encoderSyncOffButton, #sendEncoderSyncButton, #sendAllWeightsButton, " +
-                ".send-weight, #sendManualButton, .quick-command, #refreshDeviceConfigButton"
+                "#startButton, #stopButton, #getAllButton, #resetButton, #defaultsButton, #directModeButton, #straightModeButton, " +
+                "#sendSpeedButton, #encoderOnButton, #encoderOffButton, #sendEncoderPidButton, #sendEncoderCpsButton, " +
+                "#sendEncoderLimitButton, #encoderSyncOnButton, #encoderSyncOffButton, #sendEncoderSyncButton, #sendManualButton, .quick-command, #refreshDeviceConfigButton"
             ).forEach(button => {
                 button.disabled = baseDisabled;
             });
@@ -281,7 +273,7 @@
                 reconnecting: Boolean(reconnecting)
             };
             emitPidChartMessage({
-                type: "tracking-debugger:connection",
+                type: "ugv-debugger:connection",
                 timestamp: Date.now(),
                 connection: { ...pidChartConnectionState }
             });
@@ -305,12 +297,6 @@
             elements.modeDescription.textContent = isStraight
                 ? "直行模式：左右轮得到相同 SPEED 指令。"
                 : "直接模式：PWM/MOVE 直接给出左右轮目标；SPEED 不会自动分配。";
-            /* 旧循迹配置区保留为页面兼容占位。 */
-            const trackingActive = currentDriveMode === 0;
-            elements.trackingPidScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
-            elements.trackingWeightsScope.textContent = trackingActive ? "直接模式占位" : "当前不参与输出";
-            elements.trackingPidScope.classList.toggle("active", trackingActive);
-            elements.trackingWeightsScope.classList.toggle("active", trackingActive);
             document.getElementById("speedMeaning").textContent = isStraight
                 ? "直行模式下 SPEED 会同时写入左右轮。"
                 : "直接模式下请使用 PWM/MOVE。";
@@ -362,9 +348,9 @@
             const isStraight = Number(mode) === 1 || String(mode).toUpperCase() === "STRAIGHT";
             currentDriveMode = isStraight ? 1 : 0;
             elements.driveModeText.textContent = isStraight ? "直行模式" : "直接模式";
-            elements.trackingModeButton.classList.toggle("active", !isStraight);
+            elements.directModeButton.classList.toggle("active", !isStraight);
             elements.straightModeButton.classList.toggle("active", isStraight);
-            elements.trackingModeButton.setAttribute("aria-pressed", String(!isStraight));
+            elements.directModeButton.setAttribute("aria-pressed", String(!isStraight));
             elements.straightModeButton.setAttribute("aria-pressed", String(isStraight));
             renderControlStrategy();
         }
@@ -413,24 +399,4 @@
             bar.style.width = width + "%";
             bar.style.left = value >= 0 ? "50%" : (50 - width) + "%";
             bar.style.background = value < 0 ? "#d08a19" : "#087f76";
-        }
-
-        function setSensorBits(rawBits) {
-            const cleanBits = String(rawBits ?? "").replace(/[^01]/g, "").padEnd(8, "0").slice(0, 8);
-            document.getElementById("sensorBits").textContent = cleanBits;
-            document.querySelectorAll(".sensor").forEach((sensor, index) => {
-                const active = cleanBits[index] === "1";
-                sensor.classList.toggle("active", active);
-                sensor.querySelector(".sensor-value").textContent = active ? "1" : "0";
-                sensor.querySelector(".sensor-caption").textContent = active ? "黑线" : "白底";
-                sensor.setAttribute("aria-label", `CH${index + 1}：${active ? "黑线" : "白底"}`);
-            });
-        }
-
-        function setTrackingRuntime(values) {
-            const names = ["中心", "内侧偏移", "外侧偏移", "过渡桥接", "丢线搜索"];
-            const state = Number(values.TRACKING_STATE);
-            const base = Number(values.TRACKING_BASE_PWM);
-            const name = Number.isInteger(state) && names[state] ? names[state] : "--";
-            elements.trackingRuntimeState.textContent = `${name} / ${Number.isFinite(base) ? base : "--"}`;
         }

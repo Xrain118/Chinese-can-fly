@@ -305,7 +305,7 @@
         .car-chassis {
             position: absolute;
             z-index: 1;
-            top: 128px;
+            top: 62px;
             bottom: 34px;
             left: 15%;
             right: 15%;
@@ -330,48 +330,10 @@
         }
         .car-chassis::before { left: -13px; }
         .car-chassis::after { right: -13px; }
-        .car-tracking-module {
-            position: absolute;
-            z-index: 6;
-            top: 40px;
-            left: 3%;
-            right: 3%;
-            padding: 10px 11px 11px;
-            border: 1px solid #1c2b3a;
-            border-radius: 13px;
-            color: #dce8ed;
-            background: linear-gradient(165deg, #2c3e50, #17222e);
-            box-shadow: 0 14px 26px rgba(28, 43, 58, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-        }
-        .tracking-module-title {
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            font-size: 10px;
-        }
-        .tracking-module-title strong { color: #fff; font-size: 11px; letter-spacing: 0.06em; }
-        .tracking-module-title span { color: #93a9ba; }
-        .car-tracking-module .sensors { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
-        .car-tracking-module .sensor {
-            min-height: 62px;
-            padding: 5px 3px;
-            border-width: 1px;
-            border-color: #d9e2e9;
-            border-radius: 8px;
-            color: #1c2b3a;
-            background: #fff;
-        }
-        .car-tracking-module .sensor.active { color: #fff; border-color: #0b1521; background: #0b1521; box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.55), 0 4px 10px rgba(11, 21, 33, 0.4); }
-        .car-tracking-module .sensor-channel { font-size: 9px; }
-        .car-tracking-module .sensor-value { font-size: 22px; }
-        .car-tracking-module .sensor-caption { color: #7b8b99; font-size: 9px; }
-        .car-tracking-module .sensor.active .sensor-caption { color: #9fd9cd; }
         .car-center-console {
             position: absolute;
             z-index: 3;
-            top: 208px;
+            top: 170px;
             left: 26%;
             right: 26%;
             padding: 13px 14px;
@@ -382,7 +344,7 @@
             backdrop-filter: blur(6px);
         }
         .car-center-console h3 { margin: 0 0 10px; text-align: center; font-size: 12px; color: #46586b; letter-spacing: 0.05em; }
-        .car-live-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+        .car-live-stats { display: grid; grid-template-columns: 1fr; gap: 7px; }
         .car-live-stat { min-width: 0; text-align: center; }
         .car-live-stat span { display: block; color: var(--muted); font-size: 9px; }
         .car-live-stat strong {
@@ -396,7 +358,7 @@
         .wheel-telemetry {
             position: absolute;
             z-index: 6;
-            top: 158px;
+            top: 110px;
             width: 23%;
             min-height: 58px;
             padding: 8px 10px;
@@ -412,7 +374,7 @@
         }
         .wheel-telemetry.left-front, .wheel-telemetry.left-rear { left: 1%; }
         .wheel-telemetry.right-front, .wheel-telemetry.right-rear { right: 1%; text-align: right; }
-        .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 306px; }
+        .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 270px; }
         .wheel-telemetry span { grid-area: label; color: var(--muted); font-size: 9px; font-weight: 800; }
         .wheel-telemetry strong {
             grid-area: value;
@@ -483,7 +445,7 @@
         .control-step-copy { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
         .source-badge { padding: 4px 7px; border-radius: 999px; color: #0f766e; background: #d9f4ee; font-size: 9px; font-weight: 800; }
         .mode-switch { padding: 0; border: 0; background: transparent; }
-        .mode-switch-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+        .mode-switch-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
         .mode-switch button.active {
             color: #fff;
             background: linear-gradient(180deg, #14b8a6, #0d9488);
@@ -605,31 +567,6 @@
             color: var(--muted);
             font-size: 12px;
         }
-
-        .sensors {
-            display: grid;
-            grid-template-columns: repeat(8, minmax(40px, 1fr));
-            gap: 9px;
-        }
-
-        .sensor {
-            min-height: 112px;
-            padding: 12px 7px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: space-between;
-            border: 2px solid #d5dfe8;
-            border-radius: 11px;
-            color: var(--ink);
-            background: #fff;
-            transition: color 120ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
-        }
-        .sensor.active { color: #fff; background: #0b1521; border-color: #0b1521; box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.4); }
-        .sensor-channel { font-size: 12px; font-weight: 800; }
-        .sensor-value { font: 800 38px/1 ui-monospace, SFMono-Regular, Consolas, monospace; }
-        .sensor-caption { color: #8595a4; font-size: 11px; }
-        .sensor.active .sensor-caption { color: #9fd9cd; }
 
         .telemetry-footer {
             margin-top: 16px;
@@ -778,22 +715,7 @@
             line-height: 1.55;
         }
         .encoder-loop-note strong { display: block; margin-bottom: 2px; font-size: 12px; }
-        .weights-card { grid-column: 1 / -1; }
         .actions { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 9px; }
-
-        .weight-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; }
-        .weight-item {
-            padding: 11px;
-            border: 1px solid var(--line);
-            border-radius: 11px;
-            background: #f9fbfc;
-            transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
-        }
-        .weight-item:hover { border-color: #99e3cf; background: #f0fbf8; box-shadow: 0 4px 12px rgba(13, 148, 136, 0.08); }
-        .weight-top { margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; }
-        .weight-top label { font-size: 12px; font-weight: 800; }
-        .weight-top span { color: var(--muted); font-size: 10px; }
-        .weight-item button { width: 100%; margin-top: 7px; }
 
         .log-card { margin-top: 18px; }
         .log-toolbar { display: flex; align-items: center; gap: 9px; }
@@ -946,7 +868,6 @@
         .preset-fields.four-columns { grid-template-columns: repeat(4, minmax(0, 1fr)); }
         .preset-fields.compact-fields { max-width: 560px; }
         .preset-name-field { grid-column: span 2; }
-        .preset-weight-grid { display: grid; grid-template-columns: repeat(3, minmax(84px, 1fr)); gap: 8px; }
         .preset-dialog-footer {
             flex: 0 0 auto;
             display: grid;
@@ -983,7 +904,6 @@
             .config-launch-body { align-items: flex-start; flex-direction: column; }
             .config-launch-actions { width: 100%; flex-basis: auto; justify-content: flex-start; }
             .preset-fields.four-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .preset-weight-grid { grid-template-columns: repeat(3, minmax(84px, 1fr)); }
         }
 
         @media (max-width: 760px) {
@@ -991,13 +911,10 @@
             .connection-controls select { flex: 1; }
             .console-tabs { top: 6px; }
             .console-tab { gap: 6px; font-size: 12px; }
-            .sensors { grid-template-columns: repeat(3, 1fr); }
-            .sensor { min-height: 94px; }
             .telemetry-footer, .command-row { grid-template-columns: 1fr 1fr; }
             .control-chain { grid-template-columns: 1fr 1fr; gap: 10px; }
             .control-chain-node::after { display: none; }
             .control-chain-node:last-child { grid-column: 1 / -1; }
-            .weight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .car-scene { min-height: 580px; }
             .car-plan { width: calc(100% - 12px); min-height: 560px; }
             .car-chassis { left: 10%; right: 10%; }
@@ -1049,24 +966,16 @@
             .preset-dialog-status { align-items: flex-start; flex-direction: column; }
             .preset-fields.two-columns, .preset-fields.four-columns { grid-template-columns: 1fr; }
             .preset-name-field { grid-column: auto; }
-            .preset-weight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .preset-file-actions button { flex: 1 1 calc(50% - 4px); }
             .car-scene { min-height: 720px; }
-            .car-plan { min-height: 700px; margin-top: 18px; }
-            .car-tracking-module { left: 0; right: 0; padding: 9px 7px 10px; }
-            .tracking-module-title span { display: none; }
-            .car-tracking-module .sensors { gap: 3px; }
-            .car-tracking-module .sensor { min-height: 58px; padding: 5px 1px; }
-            .car-tracking-module .sensor-channel { font-size: 8px; }
-            .car-tracking-module .sensor-value { font-size: 19px; }
-            .car-tracking-module .sensor-caption { font-size: 8px; }
-            .car-chassis { top: 124px; bottom: 28px; left: 8%; right: 8%; border-radius: 40px 40px 60px 60px; }
+            .car-plan { min-height: 580px; margin-top: 18px; }
+            .car-chassis { top: 72px; bottom: 28px; left: 8%; right: 8%; border-radius: 40px 40px 60px 60px; }
             .car-chassis::before, .car-chassis::after { width: 14px; height: 44px; }
             .car-chassis::before { left: -11px; }
             .car-chassis::after { right: -11px; }
-            .car-center-console { top: 220px; left: 25%; right: 25%; padding: 11px 8px; }
-            .wheel-telemetry { top: 145px; width: 29%; padding: 7px 8px; }
-            .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 390px; }
+            .car-center-console { top: 180px; left: 25%; right: 25%; padding: 11px 8px; }
+            .wheel-telemetry { top: 115px; width: 29%; padding: 7px 8px; }
+            .wheel-telemetry.left-rear, .wheel-telemetry.right-rear { top: 330px; }
             .wheel-telemetry strong { font-size: 15px; }
             .car-drive-unit { bottom: 36px; width: 44%; min-height: 124px; padding: 11px 10px; }
             .car-drive-unit.left { left: 3%; }
