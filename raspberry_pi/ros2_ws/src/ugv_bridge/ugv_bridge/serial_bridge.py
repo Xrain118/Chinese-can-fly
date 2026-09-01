@@ -24,6 +24,7 @@ from .protocol import parse_ack, parse_bool_field, parse_frame, parse_int_field,
 
 
 SERIAL_READ_TIMEOUT_S = 0.1
+SERIAL_WRITE_TIMEOUT_S = 0.2
 SERIAL_RECONNECT_DELAY_S = 1.0
 COMMAND_ACK_TIMEOUT_S = 0.6
 READER_JOIN_TIMEOUT_S = 1.0
@@ -64,7 +65,7 @@ class UgVSerialBridge(Node):
     def _declare_parameters(self) -> None:
         """集中声明外部配置，参数名与 YAML 文件保持一一对应。"""
         self.declare_parameter("port", "/dev/serial0")
-        self.declare_parameter("baud", 9600)
+        self.declare_parameter("baud", 115200)
         self.declare_parameter("command_rate_hz", 10.0)
         self.declare_parameter("cmd_vel_timeout_s", 0.25)
         self.declare_parameter("wheel_base_m", 0.28)
@@ -78,8 +79,8 @@ class UgVSerialBridge(Node):
         self._cmd_timeout = float(self.get_parameter("cmd_vel_timeout_s").value)
         self._wheel_base = float(self.get_parameter("wheel_base_m").value)
         self._max_wheel_speed = float(self.get_parameter("max_wheel_speed_mps").value)
-        if rate <= 0.0 or self._cmd_timeout <= 0.0:
-            raise ValueError("command_rate_hz and cmd_vel_timeout_s must be positive")
+        if self._baud <= 0 or rate <= 0.0 or self._cmd_timeout <= 0.0:
+            raise ValueError("baud, command_rate_hz and cmd_vel_timeout_s must be positive")
         return rate
 
     def _create_ros_interfaces(self, command_rate_hz: float) -> None:
@@ -100,9 +101,16 @@ class UgVSerialBridge(Node):
             return True
         try:
             connection = serial.Serial(
-                self._port,
-                self._baud,
+                port=self._port,
+                baudrate=self._baud,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
                 timeout=SERIAL_READ_TIMEOUT_S,
+                write_timeout=SERIAL_WRITE_TIMEOUT_S,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
             )
             with self._serial_lock:
                 self._serial = connection

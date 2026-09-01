@@ -29,6 +29,13 @@ typedef struct
 	UgvCommand_Type type;
 } DebugProtocol_SimpleCommand;
 
+typedef struct
+{
+	char line[DEBUG_PROTOCOL_LINE_SIZE];
+	uint8_t lineLength;
+	uint8_t lineOverflow;
+} DebugProtocol_RxContext;
+
 /* 无参数命令使用声明式映射，新增同类命令时不必再复制一整段 if 分支。 */
 static const DebugProtocol_SimpleCommand g_simpleCommands[] =
 {
@@ -38,10 +45,10 @@ static const DebugProtocol_SimpleCommand g_simpleCommands[] =
 	{"DEFAULTS", UGV_COMMAND_DEFAULTS}
 };
 
-/* 接收端只缓存一行 ASCII 文本；逗号、等号会统一归一化为空格便于复用命令解析。 */
-static char g_line[DEBUG_PROTOCOL_LINE_SIZE];
-static uint8_t g_lineLength;
-static uint8_t g_lineOverflow;
+/* 两个端口分别组行；协议任务串行处理时用 active 指针复用解析函数。 */
+static DebugProtocol_RxContext g_rxContext[SERIAL_PORT_COUNT];
+static DebugProtocol_RxContext *g_activeContext;
+static Serial_Port g_activePort;
 
 static uint8_t DebugProtocol_StringEqual(const char *left, const char *right)
 {
@@ -87,6 +94,7 @@ static void DebugProtocol_InitCommand(UgvCommand *command,
 
 	/* 显式清空所有通用参数槽，避免不同命令复用结构时携带无关旧值。 */
 	command->type = UGV_COMMAND_START;
+	command->sourcePort = g_activePort;
 	command->responseName[0] = '\0';
 	command->first = 0;
 	command->second = 0;
@@ -102,24 +110,27 @@ static void DebugProtocol_InitCommand(UgvCommand *command,
 static void DebugProtocol_NormalizeLine(void)
 {
 	uint8_t index;
-	for (index = 0U; g_line[index] != '\0'; index++)
+	for (index = 0U; g_activeContext->line[index] != '\0'; index++)
 	{
 		/* 协议对大小写不敏感；把逗号/等号也当分隔符，兼容 KEY=VALUE 和空格命令。 */
-		if ((g_line[index] >= 'a') && (g_line[index] <= 'z'))
+		if ((g_activeContext->line[index] >= 'a') &&
+			(g_activeContext->line[index] <= 'z'))
 		{
-			g_line[index] = (char)(g_line[index] - ('a' - 'A'));
+			g_activeContext->line[index] =
+				(char)(g_activeContext->line[index] - ('a' - 'A'));
 		}
-		else if ((g_line[index] == ',') || (g_line[index] == '=') ||
-				 (g_line[index] == '\t'))
+		else if ((g_activeContext->line[index] == ',') ||
+				 (g_activeContext->line[index] == '=') ||
+				 (g_activeContext->line[index] == '\t'))
 		{
-			g_line[index] = ' ';
+			g_activeContext->line[index] = ' ';
 		}
 	}
 }
 
 static uint8_t DebugProtocol_Tokenize(char *tokens[], uint8_t maxTokens)
 {
-	char *cursor = g_line;
+	char *cursor = g_activeContext->line;
 	uint8_t count = 0U;
 
 	while (*cursor != '\0')
@@ -313,37 +324,49 @@ static void DebugProtocol_LineAppendFixed6(DebugProtocol_LineBuilder *builder,
 							 (long)integerPart, (long)fractionalPart);
 }
 
-static void DebugProtocol_LineSend(DebugProtocol_LineBuilder *builder)
+static void DebugProtocol_LineSend(Serial_Port port,
+								   DebugProtocol_LineBuilder *builder)
 {
 	if ((builder == 0) || (builder->truncated != 0U))
 	{
 		return;
 	}
-	(void)ProtocolTx_SendString(builder->text);
+	(void)ProtocolTx_SendString(port, builder->text);
 }
 
-void DebugProtocol_SendOk(const char *command)
+static void DebugProtocol_LineBroadcast(DebugProtocol_LineBuilder *builder)
 {
-	(void)ProtocolTx_Printf("OK C=%s\r\n", (command == 0) ? "" : command);
+	if ((builder == 0) || (builder->truncated != 0U))
+	{
+		return;
+	}
+	(void)ProtocolTx_BroadcastString(builder->text);
 }
 
-void DebugProtocol_SendErr(const char *command, const char *message)
+void DebugProtocol_SendOk(Serial_Port port, const char *command)
 {
-	(void)ProtocolTx_Printf("ERR C=%s,M=%s\r\n",
+	(void)ProtocolTx_Printf(port, "OK C=%s\r\n",
+							(command == 0) ? "" : command);
+}
+
+void DebugProtocol_SendErr(Serial_Port port, const char *command,
+							   const char *message)
+{
+	(void)ProtocolTx_Printf(port, "ERR C=%s,M=%s\r\n",
 							(command == 0) ? "" : command,
 							(message == 0) ? "" : message);
 }
 
-static void DebugProtocol_SendDriveLine(const char *prefix)
+static void DebugProtocol_BuildDriveLine(const char *prefix,
+									 DebugProtocol_LineBuilder *line)
 {
 	DriveControl_Snapshot snapshot;
-	DebugProtocol_LineBuilder line;
 
 	DriveControl_GetSnapshot(&snapshot);
-	DebugProtocol_LineInit(&line);
+	DebugProtocol_LineInit(line);
 	/* T/S 共享运行快照字段；配置参数放到独立 CFG 帧，方便前端区分同步完成点。 */
 	DebugProtocol_LineAppend(
-		&line,
+		line,
 		"%s R=%d,M=%d,SP=%d,DL=%d,DR=%d,PL=%d,PR=%d,"
 		"EL=%ld,ER=%ld,EC=%d,TL=%ld,TR=%ld,"
 		"VLF=%ld,VLR=%ld,VRF=%ld,VRR=%ld,ED=%ld,ESC=%d,ESA=%d\r\n",
@@ -367,35 +390,53 @@ static void DebugProtocol_SendDriveLine(const char *prefix)
 		(long)snapshot.encoderSyncError,
 		snapshot.encoderSyncCorrection,
 		snapshot.encoderSyncActive);
-	DebugProtocol_LineSend(&line);
 }
 
-void DebugProtocol_SendState(void)
+static void DebugProtocol_BuildConfigLine(DebugProtocol_LineBuilder *line)
+{
+	DebugProtocol_LineInit(line);
+	/* GET ALL 返回 S + CFG 两行；前端收到 CFG 后才认为配置已同步。 */
+	DebugProtocol_LineAppend(line, "CFG EC=%d,EKP=",
+								 DriveControl_GetEncoderClosed());
+	DebugProtocol_LineAppendFixed6(line, DriveControl_GetEncoderKp());
+	DebugProtocol_LineAppend(line, ",EKI=");
+	DebugProtocol_LineAppendFixed6(line, DriveControl_GetEncoderKi());
+	DebugProtocol_LineAppend(line, ",EFS=%ld,ECL=%d,ESE=%d,ESKP=",
+								 (long)DriveControl_GetEncoderFullScaleCps(),
+								 DriveControl_GetEncoderLimit(),
+								 DriveControl_GetEncoderSyncEnabled());
+	DebugProtocol_LineAppendFixed6(line, DriveControl_GetEncoderSyncKp());
+	DebugProtocol_LineAppend(line, ",EST=%ld,ESL=%d\r\n",
+									 (long)DriveControl_GetEncoderSyncToleranceCps(),
+									 DriveControl_GetEncoderSyncLimit());
+}
+
+void DebugProtocol_SendState(Serial_Port port)
 {
 	DebugProtocol_LineBuilder line;
 
-	DebugProtocol_SendDriveLine("S");
-	DebugProtocol_LineInit(&line);
-	/* GET ALL 返回 S + CFG 两行；前端收到 CFG 后才认为配置已同步。 */
-	DebugProtocol_LineAppend(&line, "CFG EC=%d,EKP=",
-							 DriveControl_GetEncoderClosed());
-	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderKp());
-	DebugProtocol_LineAppend(&line, ",EKI=");
-	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderKi());
-	DebugProtocol_LineAppend(&line, ",EFS=%ld,ECL=%d,ESE=%d,ESKP=",
-							 (long)DriveControl_GetEncoderFullScaleCps(),
-							 DriveControl_GetEncoderLimit(),
-							 DriveControl_GetEncoderSyncEnabled());
-	DebugProtocol_LineAppendFixed6(&line, DriveControl_GetEncoderSyncKp());
-	DebugProtocol_LineAppend(&line, ",EST=%ld,ESL=%d\r\n",
-								 (long)DriveControl_GetEncoderSyncToleranceCps(),
-								 DriveControl_GetEncoderSyncLimit());
-	DebugProtocol_LineSend(&line);
+	DebugProtocol_BuildDriveLine("S", &line);
+	DebugProtocol_LineSend(port, &line);
+	DebugProtocol_BuildConfigLine(&line);
+	DebugProtocol_LineSend(port, &line);
+}
+
+void DebugProtocol_BroadcastState(void)
+{
+	DebugProtocol_LineBuilder line;
+
+	DebugProtocol_BuildDriveLine("S", &line);
+	DebugProtocol_LineBroadcast(&line);
+	DebugProtocol_BuildConfigLine(&line);
+	DebugProtocol_LineBroadcast(&line);
 }
 
 void DebugProtocol_SendTelemetry(void)
 {
-	DebugProtocol_SendDriveLine("T");
+	DebugProtocol_LineBuilder line;
+
+	DebugProtocol_BuildDriveLine("T", &line);
+	DebugProtocol_LineBroadcast(&line);
 }
 
 static void DebugProtocol_SubmitCommand(const UgvCommand *command)
@@ -407,7 +448,7 @@ static void DebugProtocol_SubmitCommand(const UgvCommand *command)
 	if (UgvCommandQueue_Send(command) == 0U)
 	{
 		/* 队列满说明控制任务暂时跟不上，直接拒绝本条命令而不是阻塞协议任务。 */
-		DebugProtocol_SendErr(command->responseName, "BUSY");
+		DebugProtocol_SendErr(command->sourcePort, command->responseName, "BUSY");
 	}
 }
 
@@ -433,7 +474,7 @@ static void DebugProtocol_ProcessEncoderSyncCommand(UgvCommand *command,
 		(DebugProtocol_ParseInt(tokens[4], &syncLimit) == 0U) ||
 		(syncLimit < 0) || (syncLimit > DRIVE_CONTROL_PWM_MAX))
 	{
-		DebugProtocol_SendErr("ENC", "ARG");
+		DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 		return;
 	}
 
@@ -453,7 +494,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 
 	if (count < 2U)
 	{
-		DebugProtocol_SendErr("ENC", "ARG");
+		DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 		return;
 	}
 	DebugProtocol_InitCommand(&command, "ENC");
@@ -469,7 +510,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 			(DebugProtocol_ParseFloat(tokens[2], &kp) == 0U) ||
 			(DebugProtocol_ParseFloat(tokens[3], &ki) == 0U))
 		{
-			DebugProtocol_SendErr("ENC", "ARG");
+			DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 		}
 		else
 		{
@@ -484,7 +525,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 	{
 		if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U))
 		{
-			DebugProtocol_SendErr("ENC", "ARG");
+			DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 		}
 		else
 		{
@@ -499,7 +540,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 		if ((count < 3U) || (DebugProtocol_ParseInt(tokens[2], &ivalue) == 0U) ||
 			(ivalue < 0) || (ivalue > DRIVE_CONTROL_PWM_MAX))
 		{
-			DebugProtocol_SendErr("ENC", "ARG");
+			DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 		}
 		else
 		{
@@ -514,7 +555,7 @@ static void DebugProtocol_ProcessEncoderCommand(char *tokens[], uint8_t count)
 		DebugProtocol_ProcessEncoderSyncCommand(&command, tokens, count);
 		return;
 	}
-	DebugProtocol_SendErr("ENC", "ARG");
+	DebugProtocol_SendErr(g_activePort, "ENC", "ARG");
 }
 
 static uint8_t DebugProtocol_TrySubmitSimpleCommand(const char *name,
@@ -542,7 +583,7 @@ static void DebugProtocol_ProcessModeCommand(UgvCommand *command,
 {
 	if (count < 2U)
 	{
-		DebugProtocol_SendErr("MODE", "ARG");
+		DebugProtocol_SendErr(g_activePort, "MODE", "ARG");
 		return;
 	}
 	if (DebugProtocol_StringEqual(tokens[1], "DIRECT") != 0U)
@@ -555,7 +596,7 @@ static void DebugProtocol_ProcessModeCommand(UgvCommand *command,
 	}
 	else
 	{
-		DebugProtocol_SendErr("MODE", "ARG");
+		DebugProtocol_SendErr(g_activePort, "MODE", "ARG");
 		return;
 	}
 
@@ -576,7 +617,7 @@ static void DebugProtocol_ProcessWheelPwmCommand(UgvCommand *command,
 		(DebugProtocol_IsPwmValue(left) == 0U) ||
 		(DebugProtocol_IsPwmValue(right) == 0U))
 	{
-		DebugProtocol_SendErr(tokens[0], "ARG");
+		DebugProtocol_SendErr(g_activePort, tokens[0], "ARG");
 		return;
 	}
 
@@ -595,7 +636,7 @@ static void DebugProtocol_ProcessSpeedCommand(UgvCommand *command,
 	if ((count < 2U) || (DebugProtocol_ParseInt(tokens[1], &speed) == 0U) ||
 		(DebugProtocol_IsPwmValue(speed) == 0U))
 	{
-		DebugProtocol_SendErr("SPEED", "ARG");
+		DebugProtocol_SendErr(g_activePort, "SPEED", "ARG");
 		return;
 	}
 
@@ -648,7 +689,7 @@ static void DebugProtocol_ProcessTokens(char *tokens[], uint8_t count)
 		return;
 	}
 
-	DebugProtocol_SendErr(tokens[0], "UNKNOWN");
+	DebugProtocol_SendErr(g_activePort, tokens[0], "UNKNOWN");
 }
 
 static void DebugProtocol_ProcessLine(void)
@@ -664,38 +705,51 @@ static void DebugProtocol_ProcessLine(void)
 
 void DebugProtocol_Init(void)
 {
-	g_lineLength = 0U;
-	g_lineOverflow = 0U;
-	g_line[0] = '\0';
+	Serial_Port port;
+	for (port = SERIAL_PORT_BLUETOOTH; port < SERIAL_PORT_COUNT; port++)
+	{
+		g_rxContext[port].lineLength = 0U;
+		g_rxContext[port].lineOverflow = 0U;
+		g_rxContext[port].line[0] = '\0';
+	}
+	g_activePort = SERIAL_PORT_BLUETOOTH;
+	g_activeContext = &g_rxContext[SERIAL_PORT_BLUETOOTH];
 }
 
-void DebugProtocol_Run(void)
+void DebugProtocol_Run(Serial_Port port)
 {
 	uint8_t byte;
 
-	/* 本任务每 1ms 被调度一次，尽量一次取空环形缓冲，降低命令响应延迟。 */
-	while (Serial_Available() != 0U)
+	if ((uint32_t)port >= (uint32_t)SERIAL_PORT_COUNT)
 	{
-		byte = Serial_ReadByte();
+		return;
+	}
+	g_activePort = port;
+	g_activeContext = &g_rxContext[port];
+	/* 本任务每 1ms 被调度一次，尽量一次取空环形缓冲，降低命令响应延迟。 */
+	while (Serial_Available(port) != 0U)
+	{
+		byte = Serial_ReadByte(port);
 		if ((byte == (uint8_t)'\r') || (byte == (uint8_t)'\n'))
 		{
-			if ((g_lineOverflow == 0U) && (g_lineLength != 0U))
+			if ((g_activeContext->lineOverflow == 0U) &&
+				(g_activeContext->lineLength != 0U))
 			{
-				g_line[g_lineLength] = '\0';
+				g_activeContext->line[g_activeContext->lineLength] = '\0';
 				DebugProtocol_ProcessLine();
 			}
-			g_lineLength = 0U;
-			g_lineOverflow = 0U;
+			g_activeContext->lineLength = 0U;
+			g_activeContext->lineOverflow = 0U;
 		}
 		else if ((byte >= 0x20U) && (byte <= 0x7EU))
 		{
-			if (g_lineLength < (DEBUG_PROTOCOL_LINE_SIZE - 1U))
+			if (g_activeContext->lineLength < (DEBUG_PROTOCOL_LINE_SIZE - 1U))
 			{
-				g_line[g_lineLength++] = (char)byte;
+				g_activeContext->line[g_activeContext->lineLength++] = (char)byte;
 			}
 			else
 			{
-				g_lineOverflow = 1U;
+				g_activeContext->lineOverflow = 1U;
 			}
 		}
 	}

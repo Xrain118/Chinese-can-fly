@@ -20,5 +20,10 @@ setup(
     maintainer_email="team@example.com",
     description="ROS2 serial bridge for the STM32F407 UGV chassis.",
     license="MIT",
-    entry_points={"console_scripts": ["serial_bridge = ugv_bridge.serial_bridge:main"]},
+    entry_points={
+        "console_scripts": [
+            "serial_bridge = ugv_bridge.serial_bridge:main",
+            "serial_smoke_test = ugv_bridge.serial_smoke_test:main",
+        ]
+    },
 )

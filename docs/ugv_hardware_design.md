@@ -48,16 +48,30 @@ Four independent encoders are preferred. If the mechanical build only has two
 encoders, install them on one wheel per side and leave the unused inputs open or
 adapt firmware later.
 
-### HC-04 / Raspberry Pi Link
+### Bluetooth and Raspberry Pi UART Links
 
-| Function | STM32 Pin | HC-04 / Raspberry Pi Side |
-| --- | --- | --- |
-| STM32 TX | PA9 / USART1_TX / U1T | HC-04 RXD / Pi UART RX |
-| STM32 RX | PA10 / USART1_RX / U1R | HC-04 TXD / Pi UART TX |
-| GND | GND | GND |
+The two host links are independent and may receive the same text protocol. Replies
+to commands and `GET ALL` are returned only to the port that issued the command;
+periodic telemetry is transmitted on both ports.
 
-Default UART speed is 9600 bps. The Pi should send wheel commands only after
-the STM32 has been started with the `START` command. The direct command format is:
+| Purpose | STM32 interface | Host connection | Speed |
+| --- | --- | --- | --- |
+| HC-04/HC-05 tuning | PA9 / USART1_TX / U1T, PA10 / USART1_RX / U1R | Bluetooth module RXD/TXD | 9600 8N1 |
+| Raspberry Pi race link | PD5 / USART2_TX, PD6 / USART2_RX | Pi GPIO15/RXD0, GPIO14/TXD0 | 115200 8N1 |
+
+Direct Raspberry Pi wiring is crossed as follows:
+
+| STM32F407 | Raspberry Pi header |
+| --- | --- |
+| PD5 / USART2_TX | GPIO15 / RXD0, physical pin 10 |
+| PD6 / USART2_RX | GPIO14 / TXD0, physical pin 8 |
+| GND | Any Pi GND pin |
+
+Both devices use 3.3 V TTL levels. Never apply 5 V to PD5, PD6, or the Pi UART,
+and always connect the grounds. Keep the UART wires short and away from motor leads.
+
+The Pi should send wheel commands only after the STM32 has been started with the
+`START` command. The direct command format is:
 
 ```text
 PWM <left_pwm> <right_pwm>
@@ -90,12 +104,14 @@ vehicle forward after motor polarity has been calibrated.
 
 ## Bring-Up Checklist
 
-1. Verify STM32 clock, SWD download, and USART1 logs on U1T/U1R.
-2. Test each TB6612 channel independently with low PWM.
-3. Calibrate motor direction signs in `Motor.h`.
-4. Verify all encoder directions in `Encoder.h`.
-5. Test `START`, `PWM 200 200`, `PWM 200 -200`, and `STOP` over UART.
-6. Enable encoder closed-loop mode after open-loop motor direction is correct.
-7. Start the Raspberry Pi hotspot and confirm the UAV computer can join it.
-8. Confirm ROS2 DDS target messages between the UAV computer and the Pi.
-9. Confirm lidar scan, localization, path planning, and UART motion output.
+1. Verify the STM32 clock and SWD download.
+2. Verify USART1 at 9600 baud on U1T/U1R and USART2 at 115200 baud on PD5/PD6.
+3. Run the Raspberry Pi read-only `serial_smoke_test` and verify `S` plus `CFG`.
+4. Test each TB6612 channel independently with low PWM.
+5. Calibrate motor direction signs in `Motor.h`.
+6. Verify all encoder directions in `Encoder.h`.
+7. Test `START`, `PWM 200 200`, `PWM 200 -200`, and `STOP` over UART.
+8. Enable encoder closed-loop mode after open-loop motor direction is correct.
+9. Start the Raspberry Pi hotspot and confirm the UAV computer can join it.
+10. Confirm ROS2 DDS target messages between the UAV computer and the Pi.
+11. Confirm lidar scan, localization, path planning, and UART motion output.

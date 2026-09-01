@@ -1,8 +1,8 @@
 /*
  * FreeRTOS 任务编排层。
  *
- * 这里把整车运行拆成四条固定职责：控制任务处理命令和电机，
- * 协议任务只读串口 RX，遥测任务只发快照，串口任务只写 TX。
+ * 这里把整车运行拆成固定职责：控制任务处理命令和电机，协议任务轮询两个
+ * 串口 RX，遥测任务只发快照，两个串口各自拥有独立 TX 任务。
  * 这种分工让“谁可以改车状态”非常明确，读代码时先从 ControlTask 看起。
  */
 #include "UgvTasks.h"
@@ -32,12 +32,14 @@
 static StaticTask_t g_controlTaskControl;
 static StaticTask_t g_protocolTaskControl;
 static StaticTask_t g_telemetryTaskControl;
-static StaticTask_t g_serialTaskControl;
+static StaticTask_t g_bluetoothTxTaskControl;
+static StaticTask_t g_raspberryTxTaskControl;
 
 static StackType_t g_controlTaskStack[UGV_CONTROL_STACK_WORDS];
 static StackType_t g_protocolTaskStack[UGV_PROTOCOL_STACK_WORDS];
 static StackType_t g_telemetryTaskStack[UGV_TELEMETRY_STACK_WORDS];
-static StackType_t g_serialTaskStack[UGV_SERIAL_STACK_WORDS];
+static StackType_t g_bluetoothTxTaskStack[UGV_SERIAL_STACK_WORDS];
+static StackType_t g_raspberryTxTaskStack[UGV_SERIAL_STACK_WORDS];
 
 static void UgvTasks_ReplyCommandResult(const UgvCommand *command,
 										  uint8_t accepted)
@@ -45,11 +47,11 @@ static void UgvTasks_ReplyCommandResult(const UgvCommand *command,
 	/* 参数型命令统一用 ARG 表示校验失败，避免 switch 各分支维护两套回包逻辑。 */
 	if (accepted != 0U)
 	{
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 	}
 	else
 	{
-		DebugProtocol_SendErr(command->responseName, "ARG");
+		DebugProtocol_SendErr(command->sourcePort, command->responseName, "ARG");
 	}
 }
 
@@ -64,27 +66,27 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 	{
 	case UGV_COMMAND_START:
 		DriveControl_Start();
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_STOP:
 		DriveControl_Stop();
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_RESET:
 		DriveControl_Reset();
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_DEFAULTS:
 		DriveControl_LoadDefaults();
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_GET_ALL:
 		/* GET ALL 不进入 DriveControl，只要求协议层回发当前运行快照和配置。 */
-		DebugProtocol_SendState();
+		DebugProtocol_SendState(command->sourcePort);
 		break;
 
 	case UGV_COMMAND_MODE:
@@ -108,7 +110,7 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 
 	case UGV_COMMAND_ENCODER_ENABLE:
 		DriveControl_SetEncoderClosed(command->enabled);
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_ENCODER_GAINS:
@@ -131,7 +133,7 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 
 	case UGV_COMMAND_ENCODER_SYNC_ENABLE:
 		DriveControl_SetEncoderSyncEnabled(command->enabled);
-		DebugProtocol_SendOk(command->responseName);
+		DebugProtocol_SendOk(command->sourcePort, command->responseName);
 		break;
 
 	case UGV_COMMAND_ENCODER_SYNC_PARAMS:
@@ -143,7 +145,7 @@ static void UgvTasks_HandleCommand(const UgvCommand *command)
 		break;
 
 	default:
-		DebugProtocol_SendErr(command->responseName, "UNKNOWN");
+		DebugProtocol_SendErr(command->sourcePort, command->responseName, "UNKNOWN");
 		break;
 	}
 }
@@ -158,8 +160,8 @@ static void UgvTasks_ControlTask(void *argument)
 	wakeTick = xTaskGetTickCount();
 	lastControlMs = SystemTick_Millis();
 
-	/* 启动诊断也走 TX 队列，保证调度后所有串口输出都由 SerialTxTask 串行化。 */
-	DebugProtocol_SendState();
+	/* 启动状态同时投递两个独立 TX 队列。 */
+	DebugProtocol_BroadcastState();
 
 	for (;;)
 	{
@@ -193,8 +195,9 @@ static void UgvTasks_ProtocolTask(void *argument)
 	(void)argument;
 	for (;;)
 	{
-		/* RX 仍沿用 USART 中断环形缓冲；本任务只取字节、组行、投递命令。 */
-		DebugProtocol_Run();
+		/* 两端依次取空各自的中断环形缓冲，行缓存不会交叉。 */
+		DebugProtocol_Run(SERIAL_PORT_BLUETOOTH);
+		DebugProtocol_Run(SERIAL_PORT_RASPBERRY);
 		vTaskDelay(pdMS_TO_TICKS(UGV_PROTOCOL_PERIOD_MS));
 	}
 }
@@ -213,10 +216,16 @@ static void UgvTasks_TelemetryTask(void *argument)
 	}
 }
 
-static void UgvTasks_SerialTask(void *argument)
+static void UgvTasks_BluetoothTxTask(void *argument)
 {
 	(void)argument;
-	ProtocolTx_RunSerialTask();
+	ProtocolTx_RunSerialTask(SERIAL_PORT_BLUETOOTH);
+}
+
+static void UgvTasks_RaspberryTxTask(void *argument)
+{
+	(void)argument;
+	ProtocolTx_RunSerialTask(SERIAL_PORT_RASPBERRY);
 }
 
 void UgvTasks_Init(void)
@@ -230,13 +239,20 @@ uint8_t UgvTasks_Start(void)
 	TaskHandle_t controlTask;
 	TaskHandle_t protocolTask;
 	TaskHandle_t telemetryTask;
-	TaskHandle_t serialTask;
+	TaskHandle_t bluetoothTxTask;
+	TaskHandle_t raspberryTxTask;
 
 	/* 任务全部静态创建；任一创建失败都让 main 停在创建失败路径。 */
-	serialTask = xTaskCreateStatic(UgvTasks_SerialTask, "serial_tx",
-								   UGV_SERIAL_STACK_WORDS, 0,
-								   UGV_SERIAL_PRIORITY, g_serialTaskStack,
-								   &g_serialTaskControl);
+	bluetoothTxTask = xTaskCreateStatic(UgvTasks_BluetoothTxTask, "bt_tx",
+									 UGV_SERIAL_STACK_WORDS, 0,
+									 UGV_SERIAL_PRIORITY,
+									 g_bluetoothTxTaskStack,
+									 &g_bluetoothTxTaskControl);
+	raspberryTxTask = xTaskCreateStatic(UgvTasks_RaspberryTxTask, "pi_tx",
+									 UGV_SERIAL_STACK_WORDS, 0,
+									 UGV_SERIAL_PRIORITY,
+									 g_raspberryTxTaskStack,
+									 &g_raspberryTxTaskControl);
 	controlTask = xTaskCreateStatic(UgvTasks_ControlTask, "control",
 									UGV_CONTROL_STACK_WORDS, 0,
 									UGV_CONTROL_PRIORITY, g_controlTaskStack,
@@ -250,6 +266,7 @@ uint8_t UgvTasks_Start(void)
 									  UGV_TELEMETRY_PRIORITY,
 									  g_telemetryTaskStack,
 									  &g_telemetryTaskControl);
-	return ((serialTask != 0) && (controlTask != 0) &&
+	return ((bluetoothTxTask != 0) && (raspberryTxTask != 0) &&
+			(controlTask != 0) &&
 			(protocolTask != 0) && (telemetryTask != 0)) ? 1U : 0U;
 }

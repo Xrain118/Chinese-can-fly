@@ -1,6 +1,7 @@
 #ifndef UGV_COMMAND_H
 #define UGV_COMMAND_H
 
+#include "Serial.h"
 #include <stdint.h>
 
 /* 协议层解析后的命令类型；ControlTask 再根据 type 调用对应控制模块。 */
@@ -26,6 +27,8 @@ typedef enum
 typedef struct
 {
 	UgvCommand_Type type;
+	/* 命令来自哪个物理串口；ACK、ERR 和查询结果只返回该端口。 */
+	Serial_Port sourcePort;
 	/* OK/ERR 回包中的 C 字段名称，保持和上位机等待的命令名一致。 */
 	char responseName[16];
 	/* 通用整数参数槽：左右 PWM、模式值、CPS、限幅等都复用这里。 */

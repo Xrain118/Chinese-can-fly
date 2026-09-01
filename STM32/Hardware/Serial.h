@@ -3,22 +3,30 @@
 
 #include <stdint.h>
 
-#define SERIAL_BAUD           (9600UL)
+#define SERIAL_BT_BAUD        (9600UL)
+#define SERIAL_PI_BAUD        (115200UL)
 #define SERIAL_RX_BUFFER_SIZE (128U)
 
-/* 初始化板载 U1T/U1R 对应的 USART1 PA9/PA10 和 RX 中断。 */
+typedef enum
+{
+	SERIAL_PORT_BLUETOOTH = 0,
+	SERIAL_PORT_RASPBERRY,
+	SERIAL_PORT_COUNT
+} Serial_Port;
+
+/* 初始化 USART1 蓝牙口和 USART2 树莓派口及各自的 RX 中断。 */
 void Serial_Init(void);
 /* 阻塞发送 1 字节；只允许 SerialTxTask 间接调用。 */
-void Serial_SendByte(uint8_t byte);
+void Serial_SendByte(Serial_Port port, uint8_t byte);
 /* 阻塞发送数组。 */
-void Serial_SendArray(const uint8_t *array, uint16_t length);
+void Serial_SendArray(Serial_Port port, const uint8_t *array, uint16_t length);
 /* 阻塞发送 C 字符串，不自动补 CRLF。 */
-void Serial_SendString(const char *string);
+void Serial_SendString(Serial_Port port, const char *string);
 /* 发送固定宽度十进制数字，保留旧调试接口。 */
-void Serial_SendNumber(uint32_t number, uint8_t length);
+void Serial_SendNumber(Serial_Port port, uint32_t number, uint8_t length);
 /* 查询 RX 环形缓冲中可读字节数。 */
-uint16_t Serial_Available(void);
+uint16_t Serial_Available(Serial_Port port);
 /* 从 RX 环形缓冲读取 1 字节；空缓冲返回 0。 */
-uint8_t Serial_ReadByte(void);
+uint8_t Serial_ReadByte(Serial_Port port);
 
 #endif

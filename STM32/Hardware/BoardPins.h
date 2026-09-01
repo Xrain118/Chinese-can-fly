@@ -97,12 +97,12 @@
 #define BOARD_BT_RX_PIN              10U
 #define BOARD_BT_AF                  7U
 
-/* USART2 PD5/PD6 保留作扩展串口，当前固件不初始化。 */
-#define BOARD_DEBUG_USART            USART2
-#define BOARD_DEBUG_PORT             GPIOD
-#define BOARD_DEBUG_TX_PIN           5U
-#define BOARD_DEBUG_RX_PIN           6U
-#define BOARD_DEBUG_AF               7U
+/* 树莓派主链路：USART2/PD5/PD6，3.3 V TTL，115200 8N1。 */
+#define BOARD_PI_USART               USART2
+#define BOARD_PI_PORT                GPIOD
+#define BOARD_PI_TX_PIN              5U
+#define BOARD_PI_RX_PIN              6U
+#define BOARD_PI_AF                  7U
 
 /*
  * Reserved board functions: USB PA11/PA12. PC8..PC12 are front-motor control
