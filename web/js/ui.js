@@ -290,11 +290,11 @@
             /* 控制链按当前 F407 固件的 DIRECT/STRAIGHT 模式说明输出来源。 */
             elements.controlStrategy.textContent = isStraight ? "左右轮同速分配" : "直接 PWM";
             elements.modeDescription.textContent = isStraight
-                ? "直行模式：左右轮得到相同 SPEED 指令。"
-                : "直接模式：PWM/MOVE 直接给出左右轮目标；SPEED 不会自动分配。";
+                ? "直行模式：左右轮持续使用相同 SPEED 指令。"
+                : "直接模式：PWM/MOVE 可独立设置左右轮；SPEED 仍会同时设置左右轮。";
             document.getElementById("speedMeaning").textContent = isStraight
-                ? "直行模式下 SPEED 会同时写入左右轮。"
-                : "直接模式下请使用 PWM/MOVE。";
+                ? "SPEED 会同时写入左右轮，并在 START 后恢复。"
+                : "SPEED 设置左右同值 PWM；差速请使用 PWM/MOVE。";
 
             elements.chainExecutionValue.textContent = encoderLoopEnabled
                 ? (encoderSyncEnabled ? "速度 PI + 同步 P" : "编码器 PI 修正 PWM")

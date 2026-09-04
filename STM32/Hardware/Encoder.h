@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 /* 现场校准点：小车向前推时某轮计数为负，就只翻转对应符号。 */
-#define ENCODER_LEFT_FRONT_SIGN   (1)
-#define ENCODER_LEFT_REAR_SIGN    (1)
+#define ENCODER_LEFT_FRONT_SIGN   (-1)
+#define ENCODER_LEFT_REAR_SIGN    (-1)
 #define ENCODER_RIGHT_FRONT_SIGN  (1)
 #define ENCODER_RIGHT_REAR_SIGN   (1)
 

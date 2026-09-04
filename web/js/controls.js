@@ -60,8 +60,37 @@
                 setConnectionState(false, "自动重连已关闭");
             }
         });
-        document.getElementById("startButton").addEventListener("click", () => sendCommand("START"));
-        document.getElementById("stopButton").addEventListener("click", () => sendCommand("STOP"));
+        const startButton = document.getElementById("startButton");
+        let startSequenceToken = 0;
+        startButton.addEventListener("click", async () => {
+            const speed = rangedInput("speedInput", 0, 1000, true);
+            if (speed === null) return;
+
+            /* 启动固定执行 SPEED -> ACK -> START，避免页面值尚未下发就以旧速度运行。 */
+            const token = ++startSequenceToken;
+            const originalText = startButton.textContent;
+            startButton.disabled = true;
+            startButton.textContent = "正在启动…";
+            try {
+                const speedResult = await sendCommand("SPEED " + speed, true);
+                if (!speedResult.success || token !== startSequenceToken) return;
+
+                const startResult = await sendCommand("START", true);
+                if (startResult.success && token === startSequenceToken &&
+                    serialPort && serialPort.writable && keepReading) {
+                    sendCommand("GET ALL", false, { silent: true });
+                }
+            } finally {
+                startButton.textContent = originalText;
+                startButton.disabled = configApplyRunning ||
+                    !serialPort || !serialPort.writable || !keepReading;
+            }
+        });
+        document.getElementById("stopButton").addEventListener("click", () => {
+            /* STOP 会取消尚未完成的 SPEED -> START 序列，避免停车后又被延迟 START 拉起。 */
+            startSequenceToken += 1;
+            sendCommand("STOP");
+        });
         document.getElementById("getAllButton").addEventListener("click", () => sendCommand("GET ALL"));
         document.getElementById("resetButton").addEventListener("click", () => sendCommand("RESET"));
         document.getElementById("defaultsButton").addEventListener("click", () => sendConfigurationCommand("DEFAULTS"));

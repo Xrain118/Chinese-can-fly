@@ -44,7 +44,11 @@ ENC SYNC ON | OFF     ENC SYNC kp toleranceCps limitPwm
 GET ALL               RESET            DEFAULTS
 ```
 
-默认基线：SPEED 0、ENC OFF、ENC PID 0.02/0、CPS 5000、ENC LIMIT 100、SYNC OFF、同步 P 0.01、容差 50 CPS、限幅 50 PWM。
+默认基线：SPEED 400、ENC OFF、ENC PID 0.02/0、CPS 5000、ENC LIMIT 100、SYNC OFF、同步 P 0.01、容差 50 CPS、限幅 50 PWM。
+
+`SPEED n` 在 DIRECT 和 STRAIGHT 模式下都会设置左右同值的基础 PWM。STOP 会立即关闭实际输出但保留最后一次 SPEED，后续 START 自动恢复该速度；`PWM`/`MOVE` 仍用于直接设置左右差速。
+
+网页“启动运行”按钮会先发送当前输入框中的 `SPEED n`，收到成功回执后才发送 `START`；SPEED 失败或用户中途点击 STOP 时不会继续启动。
 
 左前/左后和右前/右后的编码器分别测量，但同侧两台电机共用一个 PWM。四轮 CPS 的同侧差值用于诊断负载、打滑和编码器方向，不代表具备四路独立轮速闭环能力。
 

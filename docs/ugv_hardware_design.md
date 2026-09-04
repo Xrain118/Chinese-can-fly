@@ -70,8 +70,10 @@ Direct Raspberry Pi wiring is crossed as follows:
 Both devices use 3.3 V TTL levels. Never apply 5 V to PD5, PD6, or the Pi UART,
 and always connect the grounds. Keep the UART wires short and away from motor leads.
 
-The Pi should send wheel commands only after the STM32 has been started with the
-`START` command. The direct command format is:
+The Pi can send `SPEED` while the vehicle is stopped; `START` then restores that
+saved value as equal left/right base PWM. `STOP` disables the actual outputs but
+keeps the last `SPEED`. A running vehicle may also accept `SPEED` in either drive
+mode. The direct differential command format is:
 
 ```text
 PWM <left_pwm> <right_pwm>

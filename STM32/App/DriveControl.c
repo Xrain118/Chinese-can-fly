@@ -314,7 +314,7 @@ void DriveControl_LoadDefaults(void)
 	g_drive.snapshot.mode = DRIVE_MODE_DIRECT;
 	g_drive.snapshot.encoderClosed = 0U;
 	g_drive.snapshot.encoderSyncEnabled = 0U;
-	g_drive.snapshot.speed = 0;
+	g_drive.snapshot.speed = 400;
 	g_drive.encoderKp = DRIVE_CONTROL_DEFAULT_ENCODER_KP;
 	g_drive.encoderKi = DRIVE_CONTROL_DEFAULT_ENCODER_KI;
 	g_drive.encoderLimit = DRIVE_CONTROL_DEFAULT_ENCODER_LIMIT;
@@ -362,7 +362,14 @@ void DriveControl_Reset(void)
 
 void DriveControl_Start(void)
 {
-	DriveControl_Reset();
+	/*
+	 * START 只重置闭环运行态，不清除已保存的 SPEED。无论当前模式如何，
+	 * 都以最后一次 SPEED 作为左右相同的启动目标；实际输出由下一控制周期写入。
+	 */
+	DriveControl_ResetSpeedControllers();
+	g_drive.encoderSynchronized = 0U;
+	DriveControl_ClearEncoderSyncOutput();
+	DriveControl_SetDesiredPwm(g_drive.snapshot.speed, g_drive.snapshot.speed);
 	g_drive.snapshot.running = 1U;
 }
 
@@ -391,11 +398,8 @@ uint8_t DriveControl_SetSpeed(int16_t speed)
 		return 0U;
 	}
 	g_drive.snapshot.speed = speed;
-	if (g_drive.snapshot.mode == DRIVE_MODE_STRAIGHT)
-	{
-		/* STRAIGHT 模式把 SPEED 同时分配给左右轮；DIRECT 模式仅保存基准速度值。 */
-		DriveControl_SetDesiredPwm(speed, speed);
-	}
+	/* SPEED 在任意模式下都是左右同值基础 PWM；停车时只保存，启动后恢复。 */
+	DriveControl_SetDesiredPwm(speed, speed);
 	return 1U;
 }
 

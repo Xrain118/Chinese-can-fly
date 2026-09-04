@@ -12,7 +12,7 @@
 
 typedef enum
 {
-	/* DIRECT：上位机直接给左右侧 PWM/MOVE，SPEED 只保存不自动分配。 */
+	/* DIRECT：允许 PWM/MOVE 独立设置左右侧；SPEED 仍会设置左右同值目标。 */
 	DRIVE_MODE_DIRECT = 0,
 	/* STRAIGHT：SPEED 同时写入左右侧目标 PWM，用于直行同速测试。 */
 	DRIVE_MODE_STRAIGHT = 1
@@ -49,13 +49,13 @@ void DriveControl_Init(void);
 void DriveControl_LoadDefaults(void);
 /* 清空积分、目标和输出，但不改变已保存的参数。 */
 void DriveControl_Reset(void);
-/* 进入运行态；真正输出在 DriveControl_Update 中更新。 */
+/* 进入运行态并恢复最后一次 SPEED；真正输出在 DriveControl_Update 中更新。 */
 void DriveControl_Start(void);
 /* 退出运行态并立即清零 PWM。 */
 void DriveControl_Stop(void);
 /* 设置 DIRECT/STRAIGHT；非法模式返回 0。 */
 uint8_t DriveControl_SetMode(DriveControl_Mode mode);
-/* 设置 SPEED，只有 STRAIGHT 模式会立刻分配到左右轮。 */
+/* 设置 SPEED，并在任意模式下将其分配为左右同值基础 PWM。 */
 uint8_t DriveControl_SetSpeed(int16_t speed);
 /* 设置左右侧 PWM/MOVE，并强制进入 DIRECT 模式。 */
 uint8_t DriveControl_SetWheelPwm(int16_t leftPwm, int16_t rightPwm);

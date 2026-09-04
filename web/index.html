@@ -116,7 +116,7 @@
                             <button id="straightModeButton" class="secondary" type="button" aria-pressed="false">直行</button>
                         </div>
                         </div>
-                        <p id="modeDescription" class="control-step-copy">直接模式：PWM/MOVE 直接给出左右轮目标，SPEED 只在直行模式下分配。</p>
+                        <p id="modeDescription" class="control-step-copy">直接模式：PWM/MOVE 可独立设置左右轮，SPEED 仍会同时设置左右轮。</p>
                     </div>
 
                     <div class="control-step primary-source">
@@ -130,7 +130,7 @@
                         </div>
                         <div class="speed-meter" aria-hidden="true"><span id="speedCommandFill"></span></div>
                         <div class="speed-scale"><span>0</span><strong><span id="baseSpeedDisplay">400</span> / 1000</strong><span>1000</span></div>
-                        <p id="speedMeaning" class="control-step-copy">直行模式使用 SPEED；直接模式请使用 PWM/MOVE。</p>
+                        <p id="speedMeaning" class="control-step-copy">SPEED 在任意模式下设置左右同值 PWM，并在 START 后恢复。</p>
                     </div>
 
                     <div class="control-step">
@@ -148,7 +148,7 @@
                     <div class="control-step">
                         <div class="control-step-head">
                             <div class="control-step-title"><span class="control-step-index">4</span><strong>启动或停车</strong></div>
-                            <span class="control-step-state">确认前 3 项后启动</span>
+                            <span class="control-step-state">自动下发 SPEED 后启动</span>
                         </div>
                         <div class="primary-drive-actions">
                             <button id="startButton" class="start" type="button">启动运行</button>
